@@ -43,6 +43,16 @@ export const getMonProfil = async () => {
   return response.data;
 };
 
+export const modifierProfil = async (data) => {
+  const response = await api.put('/auth/profil', data);
+  return response.data;
+};
+
+export const modifierMotDePasse = async (ancienMotDePasse, nouveauMotDePasse) => {
+  const response = await api.put('/auth/mot-de-passe', { ancienMotDePasse, nouveauMotDePasse });
+  return response.data;
+};
+
 // -------------------------------------------------------
 // OFFRES
 // -------------------------------------------------------

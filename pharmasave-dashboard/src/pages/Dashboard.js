@@ -3,6 +3,8 @@
 // ============================================================
 
 import React, { useState, useEffect } from 'react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { useAuth } from '../context/AuthContext';
 import { getOffresPharmacien, getReservationsPharmacien, supprimerOffre, marquerReservationRetiree } from '../api/client';
 import FormulaireOffre from '../components/FormulaireOffre';
@@ -72,6 +74,49 @@ export default function Dashboard() {
   const handleModifier = (offre) => {
     setOffreAModifier(offre);
     setAfficherFormulaire(true);
+  };
+
+  const exporterPDF = () => {
+    const doc = new jsPDF();
+    const date = new Date().toLocaleDateString('fr-FR');
+
+    // En-tête
+    doc.setFontSize(18);
+    doc.setTextColor(27, 67, 50); // VERT_F
+    doc.text('Take & Care — Réservations', 14, 20);
+
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text(`Pharmacie : ${pharmacien?.prenom} ${pharmacien?.nom}`, 14, 30);
+    doc.text(`Exporté le : ${date}`, 14, 37);
+
+    // Tableau
+    autoTable(doc, {
+      startY: 45,
+      head: [['N° Réservation', 'Offre', 'Client', 'Prix payé', 'Date', 'Statut']],
+      body: resasFiltrees.map(r => [
+        r.numero,
+        r.offre?.titre || '—',
+        `${r.utilisateur?.prenom || ''} ${r.utilisateur?.nom || ''}`.trim(),
+        `${(r.prixPaye || 0).toFixed(2)} €`,
+        new Date(r.createdAt).toLocaleDateString('fr-FR'),
+        STATUTS[r.statut]?.label || r.statut,
+      ]),
+      headStyles: { fillColor: [27, 67, 50], textColor: 255, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [250, 247, 240] },
+      styles: { fontSize: 10 },
+    });
+
+    // Totaux en bas
+    const total = resasFiltrees
+      .filter(r => r.statut !== 'annulee')
+      .reduce((acc, r) => acc + (r.prixPaye || 0), 0);
+    const finalY = doc.lastAutoTable.finalY + 8;
+    doc.setFontSize(11);
+    doc.setTextColor(27, 67, 50);
+    doc.text(`Total revenus (hors annulées) : ${total.toFixed(2)} €`, 14, finalY);
+
+    doc.save(`reservations-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
   const handleMarquerRetiree = async (id) => {
@@ -284,6 +329,9 @@ export default function Dashboard() {
           <section>
             <div style={{ ...styles.ligneEntete, marginBottom: 16 }}>
               <h2 style={styles.titreSection}>Réservations reçues</h2>
+              <button style={styles.boutonExport} onClick={exporterPDF} disabled={resasFiltrees.length === 0}>
+                ⬇️ Exporter PDF
+              </button>
             </div>
 
             <div style={styles.barreFiltre}>
@@ -548,6 +596,16 @@ const styles = {
     borderRadius: 6,
     padding: '5px 12px',
     fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+  boutonExport: {
+    backgroundColor: '#fff',
+    color: VERT,
+    border: `1px solid ${VERT}`,
+    borderRadius: 8,
+    padding: '8px 16px',
+    fontSize: 13,
     fontWeight: 600,
     cursor: 'pointer',
   },

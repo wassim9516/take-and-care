@@ -6,12 +6,13 @@ import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   FlatList, ActivityIndicator, Alert, RefreshControl,
+  Modal, TextInput, ScrollView, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS } from '../constants/colors';
 import { useAuth } from '../context/AuthContext';
-import { getMesReservations, annulerReservation } from '../api/client';
+import { getMesReservations, annulerReservation, modifierMotDePasse } from '../api/client';
 
 // Couleur et libellé selon le statut de la réservation
 const STATUTS = {
@@ -21,10 +22,68 @@ const STATUTS = {
 };
 
 export default function ProfileScreen() {
-  const { utilisateur, seDeconnecter } = useAuth();
-  const [reservations, setReservations] = useState([]);
-  const [chargement, setChargement]     = useState(true);
+  const { utilisateur, seDeconnecter, mettreAJourProfil } = useAuth();
+  const [reservations, setReservations]         = useState([]);
+  const [chargement, setChargement]             = useState(true);
   const [rafraichissement, setRafraichissement] = useState(false);
+
+  // Modal édition profil
+  const [modalVisible, setModalVisible] = useState(false);
+  const [ongletModal, setOngletModal]   = useState('infos'); // 'infos' | 'mdp'
+  const [prenom, setPrenom]             = useState('');
+  const [nom, setNom]                   = useState('');
+  const [telephone, setTelephone]       = useState('');
+  const [ancienMdp, setAncienMdp]       = useState('');
+  const [nouveauMdp, setNouveauMdp]     = useState('');
+  const [sauvegarde, setSauvegarde]     = useState(false);
+
+  const ouvrirModal = () => {
+    setPrenom(utilisateur?.prenom || '');
+    setNom(utilisateur?.nom || '');
+    setTelephone(utilisateur?.telephone || '');
+    setAncienMdp('');
+    setNouveauMdp('');
+    setOngletModal('infos');
+    setModalVisible(true);
+  };
+
+  const handleSauvegarderInfos = async () => {
+    if (!prenom.trim() || !nom.trim()) {
+      Alert.alert('Erreur', 'Prénom et nom sont obligatoires.');
+      return;
+    }
+    setSauvegarde(true);
+    try {
+      await mettreAJourProfil({ prenom: prenom.trim(), nom: nom.trim(), telephone: telephone.trim() });
+      setModalVisible(false);
+      Alert.alert('✅ Profil mis à jour !');
+    } catch {
+      Alert.alert('Erreur', 'Impossible de mettre à jour le profil.');
+    } finally {
+      setSauvegarde(false);
+    }
+  };
+
+  const handleChangerMdp = async () => {
+    if (!ancienMdp || !nouveauMdp) {
+      Alert.alert('Erreur', 'Remplis les deux champs.');
+      return;
+    }
+    if (nouveauMdp.length < 6) {
+      Alert.alert('Erreur', 'Le nouveau mot de passe doit faire au moins 6 caractères.');
+      return;
+    }
+    setSauvegarde(true);
+    try {
+      await modifierMotDePasse(ancienMdp, nouveauMdp);
+      setModalVisible(false);
+      Alert.alert('✅ Mot de passe modifié !');
+    } catch (err) {
+      Alert.alert('Erreur', err?.response?.data?.erreur || 'Ancien mot de passe incorrect.');
+    } finally {
+      setSauvegarde(false);
+    }
+  };
 
   // Recharge les réservations à chaque fois que l'onglet devient actif
   useFocusEffect(
@@ -114,6 +173,55 @@ export default function ProfileScreen() {
   return (
     <View style={styles.conteneur}>
 
+      {/* ---- MODAL ÉDITION ---- */}
+      <Modal visible={modalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setModalVisible(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={styles.modalEnTete}>
+            <Text style={styles.modalTitre}>Mon compte</Text>
+            <TouchableOpacity onPress={() => setModalVisible(false)}>
+              <Ionicons name="close" size={24} color={COLORS.texte} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Onglets */}
+          <View style={styles.onglets}>
+            <TouchableOpacity style={[styles.onglet, ongletModal === 'infos' && styles.ongletActif]} onPress={() => setOngletModal('infos')}>
+              <Text style={[styles.texteOnglet, ongletModal === 'infos' && styles.texteOngletActif]}>Mes infos</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.onglet, ongletModal === 'mdp' && styles.ongletActif]} onPress={() => setOngletModal('mdp')}>
+              <Text style={[styles.texteOnglet, ongletModal === 'mdp' && styles.texteOngletActif]}>Mot de passe</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalCorps} keyboardShouldPersistTaps="handled">
+            {ongletModal === 'infos' ? (
+              <View style={styles.formulaire}>
+                <Text style={styles.labelChamp}>Prénom</Text>
+                <TextInput style={styles.champ} value={prenom} onChangeText={setPrenom} placeholder="Prénom" />
+                <Text style={styles.labelChamp}>Nom</Text>
+                <TextInput style={styles.champ} value={nom} onChangeText={setNom} placeholder="Nom" />
+                <Text style={styles.labelChamp}>Téléphone</Text>
+                <TextInput style={styles.champ} value={telephone} onChangeText={setTelephone} placeholder="Téléphone" keyboardType="phone-pad" />
+                <Text style={styles.emailInfo}>Email : {utilisateur?.email}</Text>
+                <TouchableOpacity style={styles.boutonSauvegarder} onPress={handleSauvegarderInfos} disabled={sauvegarde}>
+                  {sauvegarde ? <ActivityIndicator color={COLORS.blanc} /> : <Text style={styles.texteBouton}>Sauvegarder</Text>}
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.formulaire}>
+                <Text style={styles.labelChamp}>Ancien mot de passe</Text>
+                <TextInput style={styles.champ} value={ancienMdp} onChangeText={setAncienMdp} placeholder="••••••" secureTextEntry />
+                <Text style={styles.labelChamp}>Nouveau mot de passe</Text>
+                <TextInput style={styles.champ} value={nouveauMdp} onChangeText={setNouveauMdp} placeholder="6 caractères minimum" secureTextEntry />
+                <TouchableOpacity style={styles.boutonSauvegarder} onPress={handleChangerMdp} disabled={sauvegarde}>
+                  {sauvegarde ? <ActivityIndicator color={COLORS.blanc} /> : <Text style={styles.texteBouton}>Changer le mot de passe</Text>}
+                </TouchableOpacity>
+              </View>
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
       {/* En-tête profil */}
       <View style={styles.entete}>
         <View style={styles.avatar}>
@@ -125,7 +233,9 @@ export default function ProfileScreen() {
           </Text>
           <Text style={styles.emailUtilisateur}>{utilisateur?.email}</Text>
         </View>
-        {/* Bouton déconnexion */}
+        <TouchableOpacity onPress={ouvrirModal} style={styles.boutonEditer}>
+          <Ionicons name="pencil-outline" size={22} color={COLORS.primaire} />
+        </TouchableOpacity>
         <TouchableOpacity onPress={seDeconnecter} style={styles.boutonDeconnexion}>
           <Ionicons name="log-out-outline" size={24} color={COLORS.danger} />
         </TouchableOpacity>
@@ -201,8 +311,90 @@ const styles = StyleSheet.create({
     color: COLORS.texteClair,
     marginTop: 2,
   },
+  boutonEditer: {
+    padding: 8,
+  },
   boutonDeconnexion: {
     padding: 8,
+  },
+  // Modal
+  modalEnTete: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    paddingTop: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.bordure,
+  },
+  modalTitre: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.texte,
+  },
+  onglets: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.bordure,
+  },
+  onglet: {
+    flex: 1,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  ongletActif: {
+    borderBottomWidth: 2,
+    borderBottomColor: COLORS.primaire,
+  },
+  texteOnglet: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: COLORS.texteClair,
+  },
+  texteOngletActif: {
+    color: COLORS.primaire,
+    fontWeight: '700',
+  },
+  modalCorps: {
+    flex: 1,
+  },
+  formulaire: {
+    padding: 20,
+    gap: 6,
+  },
+  labelChamp: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.texte,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  champ: {
+    backgroundColor: COLORS.fondClair,
+    borderWidth: 1,
+    borderColor: COLORS.bordure,
+    borderRadius: 10,
+    padding: 13,
+    fontSize: 15,
+    color: COLORS.texte,
+  },
+  emailInfo: {
+    fontSize: 13,
+    color: COLORS.texteClair,
+    marginTop: 16,
+    fontStyle: 'italic',
+  },
+  boutonSauvegarder: {
+    backgroundColor: COLORS.primaire,
+    borderRadius: 12,
+    paddingVertical: 15,
+    alignItems: 'center',
+    marginTop: 24,
+  },
+  texteBouton: {
+    color: COLORS.blanc,
+    fontSize: 16,
+    fontWeight: '700',
   },
   titreSection: {
     fontSize: 13,

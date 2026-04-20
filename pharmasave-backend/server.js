@@ -55,7 +55,7 @@ sequelize.authenticate()
   .then(() => {
     console.log('✅ Connecté à PostgreSQL');
     // sync() vérifie que les tables existent (ne les recrée pas si elles existent déjà)
-    return sequelize.sync({ alter: true });
+    return sequelize.sync();
   })
   .then(() => {
     app.listen(PORT, () => {

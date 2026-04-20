@@ -135,6 +135,55 @@ router.get('/moi', authMiddleware, async (req, res) => {
 });
 
 // -------------------------------------------------------
+// PUT /api/auth/profil
+// Modifie les infos du compte (prenom, nom, telephone)
+// -------------------------------------------------------
+router.put('/profil', authMiddleware, async (req, res) => {
+  const { prenom, nom, telephone } = req.body;
+  if (!prenom || !nom) {
+    return res.status(400).json({ erreur: 'Prénom et nom sont obligatoires.' });
+  }
+  try {
+    await Utilisateur.update(
+      { prenom, nom, telephone },
+      { where: { id: req.utilisateur.id } }
+    );
+    const utilisateur = await Utilisateur.findByPk(req.utilisateur.id, {
+      attributes: ['id', 'prenom', 'nom', 'email', 'telephone', 'pharmacieId'],
+    });
+    res.json({ message: 'Profil mis à jour.', utilisateur });
+  } catch (err) {
+    res.status(500).json({ erreur: 'Erreur serveur.' });
+  }
+});
+
+// -------------------------------------------------------
+// PUT /api/auth/mot-de-passe
+// Change le mot de passe (vérifie l'ancien)
+// -------------------------------------------------------
+router.put('/mot-de-passe', authMiddleware, async (req, res) => {
+  const { ancienMotDePasse, nouveauMotDePasse } = req.body;
+  if (!ancienMotDePasse || !nouveauMotDePasse) {
+    return res.status(400).json({ erreur: 'Les deux mots de passe sont requis.' });
+  }
+  if (nouveauMotDePasse.length < 6) {
+    return res.status(400).json({ erreur: 'Le nouveau mot de passe doit faire au moins 6 caractères.' });
+  }
+  try {
+    const utilisateur = await Utilisateur.findByPk(req.utilisateur.id);
+    const valide = await bcrypt.compare(ancienMotDePasse, utilisateur.motDePasse);
+    if (!valide) {
+      return res.status(401).json({ erreur: 'Ancien mot de passe incorrect.' });
+    }
+    const hash = await bcrypt.hash(nouveauMotDePasse, 10);
+    await utilisateur.update({ motDePasse: hash });
+    res.json({ message: 'Mot de passe modifié avec succès.' });
+  } catch (err) {
+    res.status(500).json({ erreur: 'Erreur serveur.' });
+  }
+});
+
+// -------------------------------------------------------
 // PUT /api/auth/push-token
 // Sauvegarde le token Expo push de l'utilisateur connecté
 // Body : { pushToken }

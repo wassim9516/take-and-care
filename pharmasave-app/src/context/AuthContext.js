@@ -10,7 +10,7 @@ import React, { createContext, useState, useEffect, useContext } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import { connexion, inscription, getMonProfil, savePushToken } from '../api/client';
+import { connexion, inscription, getMonProfil, savePushToken, modifierProfil } from '../api/client';
 
 // Configure l'affichage des notifications quand l'app est au premier plan
 Notifications.setNotificationHandler({
@@ -83,6 +83,11 @@ export function AuthProvider({ children }) {
   // -------------------------------------------------------
   // Fonction de déconnexion
   // -------------------------------------------------------
+  const mettreAJourProfil = async (data) => {
+    const resultat = await modifierProfil(data);
+    setUtilisateur(resultat.utilisateur);
+  };
+
   const seDeconnecter = async () => {
     await AsyncStorage.removeItem('token');
     setUtilisateur(null);
@@ -90,12 +95,13 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      utilisateur,       // Infos de l'utilisateur connecté (ou null)
-      chargement,        // True pendant la vérification du token au démarrage
+      utilisateur,
+      chargement,
       seConnecter,
       sInscrire,
       seDeconnecter,
-      estConnecte: !!utilisateur, // Raccourci booléen
+      mettreAJourProfil,
+      estConnecte: !!utilisateur,
     }}>
       {children}
     </AuthContext.Provider>
