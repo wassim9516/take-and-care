@@ -2,11 +2,12 @@
 // server.js — Point d'entrée du serveur PharmaSave
 // ============================================================
 
-require('dotenv').config(); // Charge les variables du fichier .env
+require('dotenv').config();
 
-const express  = require('express');
-const cors     = require('cors');
-const sequelize = require('./database/connection');
+const express       = require('express');
+const cors          = require('cors');
+const rateLimit     = require('express-rate-limit');
+const sequelize     = require('./database/connection');
 
 const authRouter         = require('./routes/auth');
 const pharmaciesRouter   = require('./routes/pharmacies');
@@ -14,6 +15,7 @@ const offersRouter       = require('./routes/offers');
 const reservationsRouter = require('./routes/reservations');
 const uploadRouter       = require('./routes/upload');
 const favorisRouter      = require('./routes/favoris');
+const paiementsRouter    = require('./routes/paiements');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -23,7 +25,25 @@ const PORT = process.env.PORT || 3000;
 // -------------------------------------------------------
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static('uploads')); // Sert les images uploadées
+app.use('/uploads', express.static('uploads'));
+
+// Rate limiting — auth : 15 tentatives / 15 min par IP
+const limiteAuth = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { erreur: 'Trop de tentatives. Réessaie dans 15 minutes.' },
+});
+
+// Rate limiting — API générale : 200 requêtes / minute par IP
+const limiteAPI = rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { erreur: 'Trop de requêtes. Réessaie dans un instant.' },
+});
 
 // -------------------------------------------------------
 // ROUTES
@@ -32,12 +52,13 @@ app.get('/', (req, res) => {
   res.json({ message: 'Take & Care API ✅', version: '2.0.0' });
 });
 
-app.use('/api/auth',         authRouter);
-app.use('/api/pharmacies',   pharmaciesRouter);
-app.use('/api/offers',       offersRouter);
-app.use('/api/reservations', reservationsRouter);
-app.use('/api/upload',       uploadRouter);
-app.use('/api/favoris',      favorisRouter);
+app.use('/api/auth',         limiteAuth, authRouter);
+app.use('/api/pharmacies',   limiteAPI,  pharmaciesRouter);
+app.use('/api/offers',       limiteAPI,  offersRouter);
+app.use('/api/reservations', limiteAPI,  reservationsRouter);
+app.use('/api/upload',       limiteAPI,  uploadRouter);
+app.use('/api/favoris',      limiteAPI,  favorisRouter);
+app.use('/api/paiements',   limiteAPI,  paiementsRouter);
 
 // -------------------------------------------------------
 // Middleware de gestion d'erreurs globale

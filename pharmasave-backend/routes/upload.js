@@ -34,7 +34,8 @@ router.post('/', authMiddleware, upload.single('image'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ erreur: 'Aucun fichier reçu.' });
   }
-  const url = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+  const base = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
+  const url  = `${base}/uploads/${req.file.filename}`;
   res.json({ url });
 });
 

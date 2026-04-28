@@ -3,7 +3,7 @@
 // ============================================================
 
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import { connexionPharmacien } from '../api/client';
+import { connexionPharmacien, inscriptionPharmacien } from '../api/client';
 
 const AuthContext = createContext(null);
 
@@ -33,6 +33,13 @@ export function AuthProvider({ children }) {
     setPharmacien(data.utilisateur);
   };
 
+  const sInscrirePharmacien = async (data) => {
+    const resp = await inscriptionPharmacien(data);
+    localStorage.setItem('token_pharmacien', resp.token);
+    localStorage.setItem('pharmacien_data', JSON.stringify(resp.utilisateur));
+    setPharmacien(resp.utilisateur);
+  };
+
   const seDeconnecter = () => {
     localStorage.removeItem('token_pharmacien');
     localStorage.removeItem('pharmacien_data');
@@ -40,7 +47,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ pharmacien, chargement, seConnecter, seDeconnecter, estConnecte: !!pharmacien }}>
+    <AuthContext.Provider value={{ pharmacien, chargement, seConnecter, seDeconnecter, sInscrirePharmacien, estConnecte: !!pharmacien }}>
       {children}
     </AuthContext.Provider>
   );

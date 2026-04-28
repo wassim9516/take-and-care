@@ -13,11 +13,9 @@
 // ============================================================
 
 export const CONFIG = {
-  // Adresse du serveur backend
-  // En développement : ton IP locale (voir instructions ci-dessus)
-  // En production : l'URL de ton serveur hébergé (ex: https://api.pharmasave.com)
   API_URL: 'http://10.30.1.65:3000/api',
-
-  // Rayon de recherche par défaut (en km)
   RAYON_RECHERCHE: 5,
+  // Clé publique Stripe (commence par pk_test_ ou pk_live_)
+  // Récupère-la sur https://dashboard.stripe.com/apikeys
+  STRIPE_PUBLISHABLE_KEY: 'pk_test_51TRCQ1FFctA1LMICB6vSmxbsU3wPr2lEb6CHb06HG2Y1dYVxXGppqDcCMsXwoZA2WpccJ5WsYAdz1sbhfeMwKPSy00qLwqH9u9',
 };

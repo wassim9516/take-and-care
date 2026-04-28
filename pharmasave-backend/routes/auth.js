@@ -6,7 +6,21 @@ const express  = require('express');
 const router   = express.Router();
 const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
-const { Utilisateur } = require('../database/models');
+const sequelize = require('../database/connection');
+const { Utilisateur, Pharmacie } = require('../database/models');
+const { envoyerSMS, normaliserTelephone } = require('../utils/sms');
+
+// Stockage temporaire des codes de vérification en mémoire
+// { telephone_normalisé: { code, expireAt, donnees } }
+const codesVerification = new Map();
+
+// Nettoyage automatique des codes expirés toutes les 15 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [cle, val] of codesVerification.entries()) {
+    if (val.expireAt < now) codesVerification.delete(cle);
+  }
+}, 15 * 60 * 1000);
 
 // -------------------------------------------------------
 // POST /api/auth/inscription
@@ -17,7 +31,7 @@ router.post('/inscription', async (req, res) => {
   const { prenom, nom, email, motDePasse, telephone } = req.body;
 
   // Validation basique des champs obligatoires
-  if (!prenom || !nom || !email || !motDePasse) {
+  if (!prenom || !nom || !email || !motDePasse || !telephone) {
     return res.status(400).json({ erreur: 'Tous les champs sont obligatoires.' });
   }
 
@@ -57,6 +71,7 @@ router.post('/inscription', async (req, res) => {
         prenom:      utilisateur.prenom,
         nom:         utilisateur.nom,
         email:       utilisateur.email,
+        telephone:   utilisateur.telephone,
         pharmacieId: utilisateur.pharmacieId,
       },
     });
@@ -107,6 +122,7 @@ router.post('/connexion', async (req, res) => {
         prenom:      utilisateur.prenom,
         nom:         utilisateur.nom,
         email:       utilisateur.email,
+        telephone:   utilisateur.telephone,
         pharmacieId: utilisateur.pharmacieId,
       },
     });
@@ -199,6 +215,193 @@ router.put('/push-token', authMiddleware, async (req, res) => {
     );
     res.json({ message: 'Token enregistré.' });
   } catch (err) {
+    res.status(500).json({ erreur: 'Erreur serveur.' });
+  }
+});
+
+// -------------------------------------------------------
+// POST /api/auth/demander-verification
+// Étape 1 inscription : génère un code SMS et le stocke temporairement
+// Body : { prenom, nom, email, motDePasse, telephone }
+// -------------------------------------------------------
+router.post('/demander-verification', async (req, res) => {
+  const { prenom, nom, email, motDePasse, telephone } = req.body;
+
+  if (!prenom || !nom || !email || !motDePasse || !telephone) {
+    return res.status(400).json({ erreur: 'Tous les champs sont obligatoires.' });
+  }
+  if (motDePasse.length < 6) {
+    return res.status(400).json({ erreur: 'Le mot de passe doit faire au moins 6 caractères.' });
+  }
+
+  try {
+    // Vérifie si l'email est déjà utilisé
+    const existant = await Utilisateur.findOne({ where: { email } });
+    if (existant) {
+      return res.status(409).json({ erreur: 'Cet email est déjà utilisé.' });
+    }
+
+    const numeroNormalise = normaliserTelephone(telephone);
+
+    // Génère un code à 6 chiffres valable 10 minutes
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    codesVerification.set(numeroNormalise, {
+      code,
+      expireAt: Date.now() + 10 * 60 * 1000,
+      donnees:  { prenom, nom, email, motDePasse, telephone: numeroNormalise },
+    });
+
+    await envoyerSMS(
+      numeroNormalise,
+      `Take & Care — Ton code de vérification : ${code} (valable 10 min)`
+    );
+
+    // Retourne un aperçu masqué du numéro (ex: +33 6 ** ** ** 89)
+    const apercu = numeroNormalise.slice(0, -2).replace(/\d(?=\d{2})/g, '*') + numeroNormalise.slice(-2);
+
+    res.json({ message: 'Code envoyé !', apercu });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erreur: 'Impossible d\'envoyer le SMS. Vérifie le numéro.' });
+  }
+});
+
+// -------------------------------------------------------
+// POST /api/auth/confirmer-inscription
+// Étape 2 inscription : vérifie le code et crée le compte
+// Body : { telephone, code }
+// -------------------------------------------------------
+router.post('/confirmer-inscription', async (req, res) => {
+  const { telephone, code } = req.body;
+
+  if (!telephone || !code) {
+    return res.status(400).json({ erreur: 'Téléphone et code sont requis.' });
+  }
+
+  const numeroNormalise = normaliserTelephone(telephone);
+  const entree = codesVerification.get(numeroNormalise);
+
+  if (!entree) {
+    return res.status(400).json({ erreur: 'Aucun code en attente pour ce numéro. Recommence l\'inscription.' });
+  }
+  if (Date.now() > entree.expireAt) {
+    codesVerification.delete(numeroNormalise);
+    return res.status(400).json({ erreur: 'Code expiré. Recommence l\'inscription.' });
+  }
+  if (entree.code !== code.trim()) {
+    return res.status(400).json({ erreur: 'Code incorrect.' });
+  }
+
+  // Code valide → crée le compte
+  try {
+    const { prenom, nom, email, motDePasse } = entree.donnees;
+    const hash = await bcrypt.hash(motDePasse, 10);
+
+    const utilisateur = await Utilisateur.create({
+      prenom, nom, email, telephone: numeroNormalise,
+      motDePasse: hash,
+    });
+
+    // Supprime le code utilisé
+    codesVerification.delete(numeroNormalise);
+
+    const token = jwt.sign(
+      { id: utilisateur.id, email: utilisateur.email, pharmacieId: utilisateur.pharmacieId },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.status(201).json({
+      message: 'Compte créé avec succès !',
+      token,
+      utilisateur: {
+        id:          utilisateur.id,
+        prenom:      utilisateur.prenom,
+        nom:         utilisateur.nom,
+        email:       utilisateur.email,
+        telephone:   utilisateur.telephone,
+        pharmacieId: utilisateur.pharmacieId,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erreur: 'Erreur serveur.' });
+  }
+});
+
+// -------------------------------------------------------
+// POST /api/auth/inscription-pharmacien
+// Crée un compte pharmacien + sa pharmacie en une transaction
+// Body : { prenom, nom, email, motDePasse,
+//          nomPharmacie, adresse, telephone, horaires,
+//          latitude?, longitude? }
+// -------------------------------------------------------
+router.post('/inscription-pharmacien', async (req, res) => {
+  const {
+    prenom, nom, email, motDePasse,
+    nomPharmacie, adresse, telephone, horaires,
+    latitude, longitude,
+  } = req.body;
+
+  // Validation champs obligatoires
+  if (!prenom || !nom || !email || !motDePasse || !nomPharmacie || !adresse) {
+    return res.status(400).json({ erreur: 'Tous les champs obligatoires doivent être remplis.' });
+  }
+  if (motDePasse.length < 6) {
+    return res.status(400).json({ erreur: 'Le mot de passe doit faire au moins 6 caractères.' });
+  }
+
+  try {
+    // Vérifie si l'email est déjà utilisé
+    const existant = await Utilisateur.findOne({ where: { email } });
+    if (existant) {
+      return res.status(409).json({ erreur: 'Cet email est déjà utilisé.' });
+    }
+
+    let pharmacien;
+
+    await sequelize.transaction(async (t) => {
+      // 1. Crée la pharmacie
+      const pharmacie = await Pharmacie.create({
+        nom:      nomPharmacie,
+        adresse,
+        telephone: telephone || '',
+        horaires:  horaires  || '',
+        latitude:  parseFloat(latitude)  || 48.8566, // Paris par défaut
+        longitude: parseFloat(longitude) || 2.3522,
+        note: 0,
+      }, { transaction: t });
+
+      // 2. Crée le compte pharmacien lié à cette pharmacie
+      const hash = await bcrypt.hash(motDePasse, 10);
+      pharmacien = await Utilisateur.create({
+        prenom, nom, email,
+        motDePasse: hash,
+        telephone:  telephone || '',
+        pharmacieId: pharmacie.id,
+      }, { transaction: t });
+    });
+
+    // 3. Génère le token JWT
+    const token = jwt.sign(
+      { id: pharmacien.id, email: pharmacien.email, pharmacieId: pharmacien.pharmacieId },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.status(201).json({
+      message: 'Compte pharmacien créé avec succès !',
+      token,
+      utilisateur: {
+        id:          pharmacien.id,
+        prenom:      pharmacien.prenom,
+        nom:         pharmacien.nom,
+        email:       pharmacien.email,
+        pharmacieId: pharmacien.pharmacieId,
+      },
+    });
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ erreur: 'Erreur serveur.' });
   }
 });

@@ -10,7 +10,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#2ECC71"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.tonnom.pharmasave"
@@ -26,6 +28,13 @@
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "PharmaSave a besoin de ta position pour trouver les pharmacies près de toi."
+        }
+      ],
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.com.tonnom.pharmasave",
+          "enableGooglePay": false
         }
       ]
     ]

@@ -12,16 +12,27 @@ import {
 } from 'react-native';
 import MapView, { Marker, Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 import { getPharmaciesProches } from '../api/client';
 
 export default function MapScreen({ navigation }) {
   // --- État local ---
-  const [position, setPosition]         = useState(null); // Position GPS de l'utilisateur
+  const [position, setPosition]         = useState(null);
   const [pharmacies, setPharmacies]     = useState([]);
   const [chargement, setChargement]     = useState(true);
-  const [pharmacieSelectionnee, setPharmacieSelectionnee] = useState(null); // Popup sélectionnée
+  const [pharmacieSelectionnee, setPharmacieSelectionnee] = useState(null);
+  const [rayonKm, setRayonKm]           = useState(5);
+
+  // -------------------------------------------------------
+  // Lire le rayon depuis les préférences utilisateur
+  // -------------------------------------------------------
+  useEffect(() => {
+    AsyncStorage.getItem('rayon_carte').then(val => {
+      if (val) setRayonKm(parseInt(val));
+    });
+  }, []);
 
   // -------------------------------------------------------
   // Demander la permission GPS et charger la position
@@ -105,17 +116,17 @@ export default function MapScreen({ navigation }) {
         showsUserLocation={true}    // Point bleu pour l'utilisateur
         showsMyLocationButton={true}
       >
-        {/* Cercle de rayon de recherche (5km) */}
+        {/* Cercle de rayon de recherche (selon préférence utilisateur) */}
         <Circle
           center={position}
-          radius={5000} // en mètres
-          fillColor={COLORS.primaire + '15'}   // Vert très transparent
+          radius={rayonKm * 1000}
+          fillColor={COLORS.primaire + '15'}
           strokeColor={COLORS.primaire + '60'}
           strokeWidth={1}
         />
 
-        {/* Marqueur pour chaque pharmacie */}
-        {pharmacies.map((pharmacie) => (
+        {/* Marqueurs filtrés selon le rayon choisi */}
+        {pharmacies.filter(p => p.distance == null || p.distance <= rayonKm).map((pharmacie) => (
           <Marker
             key={pharmacie.id}
             coordinate={{
@@ -159,29 +170,42 @@ export default function MapScreen({ navigation }) {
             <Text style={styles.distance}>📍 {pharmacieSelectionnee.distance} km de toi</Text>
           )}
 
-          {/* Bouton voir les offres de cette pharmacie */}
-          <TouchableOpacity
-            style={styles.bouton}
-            onPress={() => {
-              setPharmacieSelectionnee(null);
-              navigation.navigate('Offres', {
-                screen: 'Accueil',
-                params: { pharmacieNom: pharmacieSelectionnee.nom },
-              });
-            }}
-          >
-            <Text style={styles.texteBouton}>Voir les offres</Text>
-          </TouchableOpacity>
+          {/* Deux boutons : fiche complète ou offres filtrées */}
+          <View style={styles.ligneBoutons}>
+            <TouchableOpacity
+              style={[styles.bouton, styles.boutonSecondaire]}
+              onPress={() => {
+                setPharmacieSelectionnee(null);
+                navigation.navigate('Offres', {
+                  screen: 'Accueil',
+                  params: { pharmacieNom: pharmacieSelectionnee.nom },
+                });
+              }}
+            >
+              <Text style={styles.texteBoutonSecondaire}>Voir les offres</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.bouton, { flex: 1.4 }]}
+              onPress={() => {
+                const pharmacie = pharmacieSelectionnee;
+                setPharmacieSelectionnee(null);
+                navigation.navigate('PharmacieDetail', { pharmacie });
+              }}
+            >
+              <Text style={styles.texteBouton}>Voir la fiche →</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
       ) : (
         // Liste rapide des pharmacies proches
         <View style={styles.panneau}>
           <Text style={styles.titrePanneau}>
-            {pharmacies.length} pharmacie{pharmacies.length > 1 ? 's' : ''} à proximité
+            {(() => { const n = pharmacies.filter(p => p.distance == null || p.distance <= rayonKm).length; return `${n} pharmacie${n > 1 ? 's' : ''} dans un rayon de ${rayonKm} km`; })()}
           </Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.listeHorizontale}>
-            {pharmacies.map((p) => (
+            {pharmacies.filter(p => p.distance == null || p.distance <= rayonKm).map((p) => (
               <TouchableOpacity
                 key={p.id}
                 style={styles.cartePharmacieMin}
@@ -317,16 +341,31 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 12,
   },
+  ligneBoutons: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+  },
   bouton: {
+    flex: 1,
     backgroundColor: COLORS.primaire,
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
-    marginTop: 8,
+  },
+  boutonSecondaire: {
+    backgroundColor: COLORS.blanc,
+    borderWidth: 1.5,
+    borderColor: COLORS.primaire,
   },
   texteBouton: {
     color: COLORS.blanc,
-    fontWeight: 'bold',
-    fontSize: 15,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  texteBoutonSecondaire: {
+    color: COLORS.primaire,
+    fontWeight: '700',
+    fontSize: 14,
   },
 });

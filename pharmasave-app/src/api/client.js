@@ -12,10 +12,11 @@ const api = axios.create({
   timeout: 8000,
 });
 
-// -------------------------------------------------------
-// INTERCEPTEUR — Ajoute automatiquement le token JWT
-// à chaque requête si l'utilisateur est connecté
-// -------------------------------------------------------
+// Callback enregistré par AuthContext pour déconnecter l'utilisateur
+let _onDeconnexion = null;
+export const setDeconnexionCallback = (fn) => { _onDeconnexion = fn; };
+
+// Ajoute automatiquement le token JWT à chaque requête
 api.interceptors.request.use(async (config) => {
   const token = await AsyncStorage.getItem('token');
   if (token) {
@@ -24,12 +25,29 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+// Intercepte les 401 (token expiré ou invalide) → déconnexion automatique
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    if (error.response?.status === 401) {
+      await AsyncStorage.removeItem('token');
+      if (_onDeconnexion) _onDeconnexion();
+    }
+    return Promise.reject(error);
+  }
+);
+
 // -------------------------------------------------------
 // AUTH
 // -------------------------------------------------------
 
-export const inscription = async (prenom, nom, email, motDePasse) => {
-  const response = await api.post('/auth/inscription', { prenom, nom, email, motDePasse });
+export const demanderVerification = async (prenom, nom, email, motDePasse, telephone) => {
+  const response = await api.post('/auth/demander-verification', { prenom, nom, email, motDePasse, telephone });
+  return response.data;
+};
+
+export const confirmerInscription = async (telephone, code) => {
+  const response = await api.post('/auth/confirmer-inscription', { telephone, code });
   return response.data;
 };
 
@@ -57,10 +75,10 @@ export const modifierMotDePasse = async (ancienMotDePasse, nouveauMotDePasse) =>
 // OFFRES
 // -------------------------------------------------------
 
-export const getOffres = async (categorie = null) => {
-  const params   = categorie ? { categorie } : {};
+export const getOffres = async (categorie = null, offset = 0, limite = 20) => {
+  const params = { limite, offset, ...(categorie ? { categorie } : {}) };
   const response = await api.get('/offers', { params });
-  return response.data;
+  return response.data; // { offres, total, hasMore }
 };
 
 export const getOffre = async (id) => {
@@ -91,8 +109,13 @@ export const getPharmacie = async (id) => {
 // RÉSERVATIONS
 // -------------------------------------------------------
 
-export const creerReservation = async (offreId) => {
-  const response = await api.post('/reservations', { offreId });
+export const creerIntentPaiement = async (offreId) => {
+  const response = await api.post('/paiements/intent', { offreId });
+  return response.data; // { clientSecret, paymentIntentId, montant, commission, commissionTaux }
+};
+
+export const creerReservation = async (offreId, paymentIntentId = null) => {
+  const response = await api.post('/reservations', { offreId, paymentIntentId });
   return response.data;
 };
 
@@ -103,6 +126,11 @@ export const getMesReservations = async () => {
 
 export const annulerReservation = async (id) => {
   const response = await api.delete(`/reservations/${id}`);
+  return response.data;
+};
+
+export const noterReservation = async (id, note) => {
+  const response = await api.post(`/reservations/${id}/noter`, { note });
   return response.data;
 };
 

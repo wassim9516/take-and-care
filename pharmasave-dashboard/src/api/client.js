@@ -17,11 +17,38 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Intercepte les 401 (token expiré) → redirige vers le login
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token_pharmacien');
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+
 // -------------------------------------------------------
 // AUTH PHARMACIEN
 // -------------------------------------------------------
 export const connexionPharmacien = async (email, motDePasse) => {
   const response = await api.post('/auth/connexion', { email, motDePasse });
+  return response.data;
+};
+
+export const inscriptionPharmacien = async (data) => {
+  const response = await api.post('/auth/inscription-pharmacien', data);
+  return response.data;
+};
+
+export const getPharmacie = async (id) => {
+  const response = await api.get(`/pharmacies/${id}`);
+  return response.data;
+};
+
+export const modifierPharmacie = async (id, data) => {
+  const response = await api.put(`/pharmacies/${id}`, data);
   return response.data;
 };
 
@@ -58,6 +85,21 @@ export const getReservationsPharmacien = async (pharmacieId) => {
 
 export const marquerReservationRetiree = async (id) => {
   const response = await api.patch(`/reservations/${id}/statut`);
+  return response.data;
+};
+
+export const getStatutStripe = async () => {
+  const response = await api.get('/paiements/compte');
+  return response.data;
+};
+
+export const demarrerOnboardingStripe = async () => {
+  const response = await api.post('/paiements/onboarding');
+  return response.data; // { url }
+};
+
+export const modifierMotDePasse = async (ancienMotDePasse, nouveauMotDePasse) => {
+  const response = await api.put('/auth/mot-de-passe', { ancienMotDePasse, nouveauMotDePasse });
   return response.data;
 };
 

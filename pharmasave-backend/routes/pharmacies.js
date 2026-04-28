@@ -2,8 +2,9 @@
 // routes/pharmacies.js — Routes liées aux pharmacies (PostgreSQL)
 // ============================================================
 
-const express    = require('express');
-const router     = express.Router();
+const express        = require('express');
+const router         = express.Router();
+const authMiddleware = require('../middleware/auth');
 const { Pharmacie, Offre } = require('../database/models');
 
 // GET /api/pharmacies — Toutes les pharmacies
@@ -50,6 +51,37 @@ router.get('/:id', async (req, res) => {
 
     if (!pharmacie) return res.status(404).json({ erreur: 'Pharmacie introuvable.' });
     res.json(pharmacie);
+  } catch (err) {
+    res.status(500).json({ erreur: 'Erreur serveur.' });
+  }
+});
+
+// PUT /api/pharmacies/:id — Modifier les infos de la pharmacie (pharmacien connecté)
+router.put('/:id', authMiddleware, async (req, res) => {
+  const pharmacieId = req.utilisateur.pharmacieId;
+
+  if (Number(pharmacieId) !== Number(req.params.id)) {
+    return res.status(403).json({ erreur: 'Action non autorisée.' });
+  }
+
+  const { nom, adresse, telephone, horaires, latitude, longitude, image } = req.body;
+
+  if (!nom || !adresse) {
+    return res.status(400).json({ erreur: 'Nom et adresse sont obligatoires.' });
+  }
+
+  try {
+    const pharmacie = await Pharmacie.findByPk(req.params.id);
+    if (!pharmacie) return res.status(404).json({ erreur: 'Pharmacie introuvable.' });
+
+    await pharmacie.update({
+      nom, adresse, telephone, horaires,
+      ...(latitude  ? { latitude:  parseFloat(latitude)  } : {}),
+      ...(longitude ? { longitude: parseFloat(longitude) } : {}),
+      ...(image     ? { image }                             : {}),
+    });
+
+    res.json({ message: 'Pharmacie mise à jour.', pharmacie });
   } catch (err) {
     res.status(500).json({ erreur: 'Erreur serveur.' });
   }

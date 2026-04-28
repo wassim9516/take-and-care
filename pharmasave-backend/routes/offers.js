@@ -4,28 +4,55 @@
 
 const express        = require('express');
 const router         = express.Router();
+const { Op }         = require('sequelize');
+const fs             = require('fs');
+const path           = require('path');
 const { Offre, Pharmacie, Utilisateur } = require('../database/models');
 const authMiddleware = require('../middleware/auth');
 const { envoyerNotifications } = require('../utils/notifications');
 
-// GET /api/offers — Toutes les offres actives (filtrables par catégorie)
+function supprimerFichierImage(imageUrl) {
+  if (!imageUrl) return;
+  const nomFichier = path.basename(imageUrl);
+  if (!nomFichier.startsWith('offre-')) return;
+  const cheminFichier = path.join(__dirname, '..', 'uploads', nomFichier);
+  fs.unlink(cheminFichier, () => {});
+}
+
+// GET /api/offers — Offres actives, paginées
 router.get('/', async (req, res) => {
   try {
-    const where = { actif: true };
+    const limite = Math.min(parseInt(req.query.limite) || 20, 100);
+    const offset = parseInt(req.query.offset) || 0;
+
+    const aujourdhui = new Date();
+    aujourdhui.setHours(0, 0, 0, 0);
+
+    const where = {
+      actif: true,
+      [Op.or]: [
+        { datePeremption: null },
+        { datePeremption: { [Op.gte]: aujourdhui } },
+      ],
+    };
     if (req.query.categorie) where.categorie = req.query.categorie;
 
-    const offres = await Offre.findAll({
+    const { count, rows } = await Offre.findAndCountAll({
       where,
-      include: [{ model: Pharmacie, as: 'pharmacie', attributes: ['nom', 'adresse'] }],
+      include: [{ model: Pharmacie, as: 'pharmacie', attributes: ['nom', 'adresse', 'latitude', 'longitude'] }],
       order: [['createdAt', 'DESC']],
+      limit:  limite,
+      offset,
     });
 
-    const resultat = offres.map(o => ({
+    const offres = rows.map(o => ({
       ...o.toJSON(),
       pharmacieNom: o.pharmacie?.nom,
+      pharmacieLat: o.pharmacie?.latitude,
+      pharmacieLng: o.pharmacie?.longitude,
     }));
 
-    res.json(resultat);
+    res.json({ offres, total: count, hasMore: offset + limite < count });
   } catch (err) {
     res.status(500).json({ erreur: 'Erreur serveur.' });
   }
@@ -102,18 +129,22 @@ router.put('/:id', authMiddleware, async (req, res) => {
     const offre = await Offre.findByPk(req.params.id);
     if (!offre) return res.status(404).json({ erreur: 'Offre introuvable.' });
 
-    if (offre.pharmacieId !== pharmacieId) {
+    if (Number(offre.pharmacieId) !== Number(pharmacieId)) {
       return res.status(403).json({ erreur: 'Action non autorisée.' });
     }
 
+    const ancienneImage = offre.image;
     await offre.update(req.body);
+    if (req.body.image && ancienneImage && req.body.image !== ancienneImage) {
+      supprimerFichierImage(ancienneImage);
+    }
     res.json(offre);
   } catch (err) {
     res.status(500).json({ erreur: 'Erreur serveur.' });
   }
 });
 
-// DELETE /api/offers/:id — Supprimer une offre
+// DELETE /api/offers/:id — Supprimer une offre + son image
 router.delete('/:id', authMiddleware, async (req, res) => {
   const pharmacieId = req.utilisateur.pharmacieId;
   if (!pharmacieId) {
@@ -123,11 +154,13 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     const offre = await Offre.findByPk(req.params.id);
     if (!offre) return res.status(404).json({ erreur: 'Offre introuvable.' });
 
-    if (offre.pharmacieId !== pharmacieId) {
+    if (Number(offre.pharmacieId) !== Number(pharmacieId)) {
       return res.status(403).json({ erreur: 'Action non autorisée.' });
     }
 
+    const imageUrl = offre.image;
     await offre.destroy();
+    supprimerFichierImage(imageUrl);
     res.json({ message: 'Offre supprimée.' });
   } catch (err) {
     res.status(500).json({ erreur: 'Erreur serveur.' });

@@ -2,13 +2,15 @@
 // src/App.js — Racine du dashboard pharmacien
 // ============================================================
 
-import React from 'react';
+import React, { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import Login     from './pages/Login';
-import Dashboard from './pages/Dashboard';
+import Login                  from './pages/Login';
+import Dashboard              from './pages/Dashboard';
+import InscriptionPharmacien  from './pages/InscriptionPharmacien';
 
 function Routeur() {
   const { estConnecte, chargement } = useAuth();
+  const [afficherInscription, setAfficherInscription] = useState(false);
 
   if (chargement) {
     return (
@@ -18,7 +20,13 @@ function Routeur() {
     );
   }
 
-  return estConnecte ? <Dashboard /> : <Login />;
+  if (estConnecte) return <Dashboard />;
+
+  if (afficherInscription) {
+    return <InscriptionPharmacien onRetourConnexion={() => setAfficherInscription(false)} />;
+  }
+
+  return <Login onInscription={() => setAfficherInscription(true)} />;
 }
 
 export default function App() {

@@ -90,6 +90,10 @@ const Pharmacie = sequelize.define('Pharmacie', {
     type: DataTypes.FLOAT,
     defaultValue: 0,
   },
+  stripeAccountId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
 }, { tableName: 'pharmacies' });
 
 // -------------------------------------------------------
@@ -157,10 +161,16 @@ const Reservation = sequelize.define('Reservation', {
     primaryKey: true,
     autoIncrement: true,
   },
-  // Numéro unique affiché à l'utilisateur (ex: RES-1234567)
   numero: {
     type: DataTypes.STRING,
     unique: true,
+  },
+  // Note laissée par le client après retrait (1-5, null = pas encore noté)
+  noteClient: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    defaultValue: null,
+    validate: { min: 1, max: 5 },
   },
   statut: {
     type: DataTypes.ENUM('confirmee', 'retiree', 'annulee'),
@@ -168,6 +178,14 @@ const Reservation = sequelize.define('Reservation', {
   },
   prixPaye: {
     type: DataTypes.FLOAT,
+  },
+  stripePaymentIntentId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  commission: {
+    type: DataTypes.FLOAT,
+    allowNull: true,
   },
   // Clés étrangères
   utilisateurId: {

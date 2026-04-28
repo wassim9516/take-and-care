@@ -5,7 +5,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 
-export default function Login() {
+export default function Login({ onInscription }) {
   const [email, setEmail]         = useState('');
   const [motDePasse, setMotDePasse] = useState('');
   const [erreur, setErreur]       = useState('');
@@ -68,6 +68,17 @@ export default function Login() {
             {chargement ? 'Connexion...' : 'Se connecter'}
           </button>
         </form>
+
+        {/* Lien inscription */}
+        <div style={styles.separateurInscription}>
+          <div style={styles.ligneSep} />
+          <span style={styles.ouSep}>ou</span>
+          <div style={styles.ligneSep} />
+        </div>
+
+        <button style={styles.boutonInscription} onClick={onInscription}>
+          Créer un espace pharmacien →
+        </button>
 
       </div>
     </div>
@@ -151,5 +162,32 @@ const styles = {
     fontWeight: 700,
     cursor: 'pointer',
     marginTop: 8,
+  },
+  separateurInscription: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    margin: '20px 0 16px',
+  },
+  ligneSep: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#EDE8DF',
+  },
+  ouSep: {
+    fontSize: 13,
+    color: '#6B7C6B',
+    flexShrink: 0,
+  },
+  boutonInscription: {
+    width: '100%',
+    backgroundColor: '#fff',
+    color: VERT,
+    border: `1.5px solid ${VERT}`,
+    borderRadius: 10,
+    padding: '13px',
+    fontSize: 15,
+    fontWeight: 700,
+    cursor: 'pointer',
   },
 };

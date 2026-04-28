@@ -12,43 +12,57 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 import { useAuth } from '../context/AuthContext';
 
-export default function LoginScreen() {
-  // Bascule entre "connexion" et "inscription"
-  const [mode, setMode]             = useState('connexion');
-
-  // Champs du formulaire
-  const [prenom, setPrenom]         = useState('');
-  const [nom, setNom]               = useState('');
-  const [email, setEmail]           = useState('');
-  const [motDePasse, setMotDePasse] = useState('');
+export default function LoginScreen({ navigation }) {
+  const [mode, setMode]               = useState('connexion');
+  const [prenom, setPrenom]           = useState('');
+  const [nom, setNom]                 = useState('');
+  const [email, setEmail]             = useState('');
+  const [telephone, setTelephone]     = useState('');
+  const [motDePasse, setMotDePasse]   = useState('');
   const [afficherMdp, setAfficherMdp] = useState(false);
-  const [chargement, setChargement] = useState(false);
+  const [chargement, setChargement]   = useState(false);
 
-  const { seConnecter, sInscrire } = useAuth();
+  const { seConnecter, demanderCodeSMS, confirmerCompte } = useAuth();
 
-  // -------------------------------------------------------
-  // Soumission du formulaire
-  // -------------------------------------------------------
   const handleSubmit = async () => {
-    // Validation basique
     if (!email.trim() || !motDePasse.trim()) {
       return Alert.alert('Champs manquants', 'Email et mot de passe sont obligatoires.');
     }
-    if (mode === 'inscription' && (!prenom.trim() || !nom.trim())) {
+
+    if (mode === 'connexion') {
+      setChargement(true);
+      try {
+        await seConnecter(email.trim(), motDePasse);
+      } catch (err) {
+        Alert.alert('Erreur', err.response?.data?.erreur || 'Email ou mot de passe incorrect.');
+      } finally {
+        setChargement(false);
+      }
+      return;
+    }
+
+    // Mode inscription
+    if (!prenom.trim() || !nom.trim()) {
       return Alert.alert('Champs manquants', 'Prénom et nom sont obligatoires.');
+    }
+    if (!telephone.trim()) {
+      return Alert.alert('Champs manquants', 'Le numéro de téléphone est obligatoire.');
     }
 
     setChargement(true);
     try {
-      if (mode === 'connexion') {
-        await seConnecter(email.trim(), motDePasse);
-      } else {
-        await sInscrire(prenom.trim(), nom.trim(), email.trim(), motDePasse);
-      }
-      // Si succès : App.js redirige automatiquement vers l'app principale
+      const result = await demanderCodeSMS(
+        prenom.trim(), nom.trim(), email.trim(), motDePasse, telephone.trim()
+      );
+      // Navigue vers l'écran de vérification
+      navigation.navigate('Verification', {
+        telephone: telephone.trim(),
+        apercu:    result.apercu,
+        onConfirmer: confirmerCompte,
+        onRenvoyer:  () => demanderCodeSMS(prenom.trim(), nom.trim(), email.trim(), motDePasse, telephone.trim()),
+      });
     } catch (err) {
-      const message = err.response?.data?.erreur || 'Une erreur est survenue.';
-      Alert.alert('Erreur', message);
+      Alert.alert('Erreur', err.response?.data?.erreur || 'Une erreur est survenue.');
     } finally {
       setChargement(false);
     }
@@ -61,59 +75,60 @@ export default function LoginScreen() {
     >
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
 
-        {/* Logo + Titre */}
         <View style={styles.entete}>
           <MaterialCommunityIcons name="clover" size={60} color={COLORS.primaire} />
           <Text style={styles.titre}>Take & Care</Text>
           <Text style={styles.sousTitre}>Luttez contre les prix et le gaspillage</Text>
         </View>
 
-        {/* Onglets Connexion / Inscription */}
         <View style={styles.onglets}>
-          <TouchableOpacity
-            style={[styles.onglet, mode === 'connexion' && styles.ongletActif]}
-            onPress={() => setMode('connexion')}
-          >
-            <Text style={[styles.texteOnglet, mode === 'connexion' && styles.texteOngletActif]}>
-              Connexion
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.onglet, mode === 'inscription' && styles.ongletActif]}
-            onPress={() => setMode('inscription')}
-          >
-            <Text style={[styles.texteOnglet, mode === 'inscription' && styles.texteOngletActif]}>
-              Inscription
-            </Text>
-          </TouchableOpacity>
+          {['connexion', 'inscription'].map(m => (
+            <TouchableOpacity
+              key={m}
+              style={[styles.onglet, mode === m && styles.ongletActif]}
+              onPress={() => setMode(m)}
+            >
+              <Text style={[styles.texteOnglet, mode === m && styles.texteOngletActif]}>
+                {m === 'connexion' ? 'Connexion' : 'Inscription'}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
-        {/* Formulaire */}
         <View style={styles.formulaire}>
 
-          {/* Champs prénom + nom (inscription seulement) */}
+          {/* Champs inscription seulement */}
           {mode === 'inscription' && (
-            <View style={styles.ligneChamps}>
+            <>
+              <View style={styles.ligneChamps}>
+                <TextInput
+                  style={[styles.champ, { flex: 1 }]}
+                  placeholder="Prénom"
+                  placeholderTextColor={COLORS.texteClair}
+                  value={prenom}
+                  onChangeText={setPrenom}
+                  autoCapitalize="words"
+                />
+                <TextInput
+                  style={[styles.champ, { flex: 1 }]}
+                  placeholder="Nom"
+                  placeholderTextColor={COLORS.texteClair}
+                  value={nom}
+                  onChangeText={setNom}
+                  autoCapitalize="words"
+                />
+              </View>
               <TextInput
-                style={[styles.champ, { flex: 1 }]}
-                placeholder="Prénom"
+                style={styles.champ}
+                placeholder="Téléphone (ex: 06 12 34 56 78)"
                 placeholderTextColor={COLORS.texteClair}
-                value={prenom}
-                onChangeText={setPrenom}
-                autoCapitalize="words"
+                value={telephone}
+                onChangeText={setTelephone}
+                keyboardType="phone-pad"
               />
-              <TextInput
-                style={[styles.champ, { flex: 1 }]}
-                placeholder="Nom"
-                placeholderTextColor={COLORS.texteClair}
-                value={nom}
-                onChangeText={setNom}
-                autoCapitalize="words"
-              />
-            </View>
+            </>
           )}
 
-          {/* Email */}
           <TextInput
             style={styles.champ}
             placeholder="Email"
@@ -125,7 +140,6 @@ export default function LoginScreen() {
             autoCorrect={false}
           />
 
-          {/* Mot de passe */}
           <View style={styles.champMdp}>
             <TextInput
               style={styles.inputMdp}
@@ -136,7 +150,6 @@ export default function LoginScreen() {
               secureTextEntry={!afficherMdp}
               autoCapitalize="none"
             />
-            {/* Bouton afficher/masquer le mot de passe */}
             <TouchableOpacity onPress={() => setAfficherMdp(!afficherMdp)}>
               <MaterialCommunityIcons
                 name={afficherMdp ? 'eye-off' : 'eye'}
@@ -146,7 +159,12 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Bouton principal */}
+          {mode === 'inscription' && (
+            <Text style={styles.noteVerification}>
+              📱 Un code de vérification sera envoyé par SMS
+            </Text>
+          )}
+
           <TouchableOpacity
             style={[styles.bouton, chargement && styles.boutonDesactive]}
             onPress={handleSubmit}
@@ -155,11 +173,10 @@ export default function LoginScreen() {
             {chargement
               ? <ActivityIndicator color={COLORS.blanc} />
               : <Text style={styles.texteBouton}>
-                  {mode === 'connexion' ? 'Se connecter' : 'Créer mon compte'}
+                  {mode === 'connexion' ? 'Se connecter' : 'Recevoir le code SMS →'}
                 </Text>
             }
           </TouchableOpacity>
-
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -167,30 +184,11 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  conteneur: {
-    flex: 1,
-    backgroundColor: '#FAF7F0',
-  },
-  scroll: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    padding: 24,
-  },
-  entete: {
-    alignItems: 'center',
-    marginBottom: 36,
-  },
-  titre: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: COLORS.primaireF,
-    marginTop: 12,
-  },
-  sousTitre: {
-    fontSize: 14,
-    color: COLORS.texteClair,
-    marginTop: 4,
-  },
+  conteneur: { flex: 1, backgroundColor: '#FAF7F0' },
+  scroll: { flexGrow: 1, justifyContent: 'center', padding: 24 },
+  entete: { alignItems: 'center', marginBottom: 36 },
+  titre: { fontSize: 28, fontWeight: '800', color: COLORS.primaireF, marginTop: 12 },
+  sousTitre: { fontSize: 14, color: COLORS.texteClair, marginTop: 4 },
   onglets: {
     flexDirection: 'row',
     backgroundColor: COLORS.blanc,
@@ -200,30 +198,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.bordure,
   },
-  onglet: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderRadius: 10,
-  },
-  ongletActif: {
-    backgroundColor: COLORS.primaire,
-  },
-  texteOnglet: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.texteClair,
-  },
-  texteOngletActif: {
-    color: COLORS.blanc,
-  },
-  formulaire: {
-    gap: 12,
-  },
-  ligneChamps: {
-    flexDirection: 'row',
-    gap: 12,
-  },
+  onglet: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 10 },
+  ongletActif: { backgroundColor: COLORS.primaire },
+  texteOnglet: { fontSize: 15, fontWeight: '600', color: COLORS.texteClair },
+  texteOngletActif: { color: COLORS.blanc },
+  formulaire: { gap: 12 },
+  ligneChamps: { flexDirection: 'row', gap: 12 },
   champ: {
     backgroundColor: COLORS.blanc,
     borderRadius: 12,
@@ -243,11 +223,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.bordure,
   },
-  inputMdp: {
-    flex: 1,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: COLORS.texte,
+  inputMdp: { flex: 1, paddingVertical: 14, fontSize: 15, color: COLORS.texte },
+  noteVerification: {
+    fontSize: 13,
+    color: COLORS.primaire,
+    fontWeight: '500',
+    textAlign: 'center',
+    paddingVertical: 4,
   },
   bouton: {
     backgroundColor: COLORS.primaire,
@@ -256,12 +238,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
   },
-  boutonDesactive: {
-    opacity: 0.6,
-  },
-  texteBouton: {
-    color: COLORS.blanc,
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  boutonDesactive: { opacity: 0.6 },
+  texteBouton: { color: COLORS.blanc, fontSize: 16, fontWeight: 'bold' },
 });

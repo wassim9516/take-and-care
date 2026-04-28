@@ -8,20 +8,22 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, Image, TouchableOpacity,
-  StyleSheet, ActivityIndicator, Alert,
+  StyleSheet, ActivityIndicator, Alert, Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useStripe } from '@stripe/stripe-react-native';
 import { COLORS } from '../constants/colors';
-import { getOffre, creerReservation } from '../api/client';
+import { CONFIG } from '../config';
+import { getOffre, creerReservation, creerIntentPaiement } from '../api/client';
 
 export default function OfferDetailScreen({ route, navigation }) {
-  // Récupère l'ID passé depuis HomeScreen
   const { offerId } = route.params;
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
 
-  // --- État local ---
-  const [offre, setOffre]           = useState(null);
-  const [chargement, setChargement] = useState(true);
-  const [reservation, setReservation] = useState(false); // Bouton en cours de traitement
+  const [offre, setOffre]             = useState(null);
+  const [chargement, setChargement]   = useState(true);
+  const [reservation, setReservation] = useState(false);
+  const paiementActif = !!CONFIG.STRIPE_PUBLISHABLE_KEY;
 
   // -------------------------------------------------------
   // Charger l'offre au montage du composant
@@ -31,8 +33,14 @@ export default function OfferDetailScreen({ route, navigation }) {
       try {
         const data = await getOffre(offerId);
         setOffre(data);
-        // Définit le titre de la page dans la barre de navigation
-        navigation.setOptions({ title: data.titre });
+        navigation.setOptions({
+          title: data.titre,
+          headerRight: () => (
+            <TouchableOpacity onPress={() => partager(data)} style={{ paddingRight: 4 }}>
+              <Ionicons name="share-outline" size={24} color={COLORS.primaireF} />
+            </TouchableOpacity>
+          ),
+        });
       } catch {
         Alert.alert('Erreur', 'Impossible de charger les détails de cette offre.');
         navigation.goBack();
@@ -44,40 +52,93 @@ export default function OfferDetailScreen({ route, navigation }) {
   }, [offerId]);
 
   // -------------------------------------------------------
+  // Partage natif (WhatsApp, SMS, email...)
+  // -------------------------------------------------------
+  const partager = async (data) => {
+    const reduction = data.prixOriginal > 0
+      ? Math.round(((data.prixOriginal - data.prixReduit) / data.prixOriginal) * 100)
+      : 0;
+    try {
+      await Share.share({
+        message:
+          `🍀 Take & Care — Bonne affaire !\n\n` +
+          `🛍️ ${data.titre}\n` +
+          `💊 ${data.pharmacieNom}\n` +
+          `💰 ${data.prixReduit.toFixed(2)}€ au lieu de ${data.prixOriginal.toFixed(2)}€ (-${reduction}%)\n` +
+          `⏰ Retrait : ${data.heureRetrait}\n\n` +
+          `Télécharge Take & Care pour réserver !`,
+        title: data.titre,
+      });
+    } catch {
+      // Silencieux si l'utilisateur annule
+    }
+  };
+
+  // -------------------------------------------------------
   // Gestion de la réservation
   // -------------------------------------------------------
   const handleReserver = async () => {
-    // Confirmation avant de réserver
-    Alert.alert(
-      'Confirmer la réservation',
-      `Tu vas réserver "${offre.titre}" pour ${offre.prixReduit?.toFixed(2) ?? '0.00'}€.\n\nRetrait : ${offre.heureRetrait}`,
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Réserver !',
-          style: 'default',
-          onPress: async () => {
-            setReservation(true);
-            try {
-              const resultat = await creerReservation(offre.id);
-              // Succès : affiche le numéro de réservation
-              Alert.alert(
-                '🎉 Réservation confirmée !',
-                `Numéro : ${resultat.reservation.numero}\n\nPasse à la pharmacie entre ${resultat.reservation.heureRetrait} avec ton numéro de réservation.`,
-                [{
-                  text: 'Super !',
-                  onPress: () => navigation.goBack(),
-                }]
-              );
-            } catch (erreur) {
-              Alert.alert('Erreur', 'La réservation a échoué. Réessaie.');
-            } finally {
-              setReservation(false);
-            }
-          },
-        },
-      ]
-    );
+    setReservation(true);
+    try {
+      if (paiementActif) {
+        // ── Flux avec paiement Stripe ──
+        const intent = await creerIntentPaiement(offre.id);
+
+        const { error: initError } = await initPaymentSheet({
+          paymentIntentClientSecret: intent.clientSecret,
+          merchantDisplayName: 'Take & Care',
+          style: 'alwaysLight',
+        });
+        if (initError) throw new Error(initError.message);
+
+        const { error: payError } = await presentPaymentSheet();
+        if (payError) {
+          if (payError.code !== 'Canceled') {
+            Alert.alert('Paiement refusé', payError.message);
+          }
+          return;
+        }
+
+        // Paiement réussi → confirmer la réservation
+        const resultat = await creerReservation(offre.id, intent.paymentIntentId);
+        Alert.alert(
+          '🎉 Réservation confirmée !',
+          `Numéro : ${resultat.reservation.numero}\n\nPasse à la pharmacie entre ${resultat.reservation.heureRetrait} avec ton numéro de réservation.`,
+          [{ text: 'Super !', onPress: () => navigation.goBack() }]
+        );
+      } else {
+        // ── Flux sans paiement (Stripe non configuré) ──
+        Alert.alert(
+          'Confirmer la réservation',
+          `Tu vas réserver "${offre.titre}" pour ${offre.prixReduit?.toFixed(2) ?? '0.00'}€.\n\nRetrait : ${offre.heureRetrait}`,
+          [
+            { text: 'Annuler', style: 'cancel', onPress: () => setReservation(false) },
+            {
+              text: 'Réserver !',
+              onPress: async () => {
+                try {
+                  const resultat = await creerReservation(offre.id);
+                  Alert.alert(
+                    '🎉 Réservation confirmée !',
+                    `Numéro : ${resultat.reservation.numero}\n\nPasse à la pharmacie entre ${resultat.reservation.heureRetrait} avec ton numéro de réservation.`,
+                    [{ text: 'Super !', onPress: () => navigation.goBack() }]
+                  );
+                } catch {
+                  Alert.alert('Erreur', 'La réservation a échoué. Réessaie.');
+                } finally {
+                  setReservation(false);
+                }
+              },
+            },
+          ]
+        );
+        return;
+      }
+    } catch (erreur) {
+      Alert.alert('Erreur', erreur?.response?.data?.erreur || 'La réservation a échoué. Réessaie.');
+    } finally {
+      setReservation(false);
+    }
   };
 
   // -------------------------------------------------------
@@ -125,7 +186,7 @@ export default function OfferDetailScreen({ route, navigation }) {
 
           {/* Contenu du panier */}
           <Text style={styles.sousTitre}>Ce que contient le panier :</Text>
-          {offre.produits.map((produit, index) => (
+          {(offre.produits || []).map((produit, index) => (
             <View key={index} style={styles.ligneProduit}>
               <Ionicons name="checkmark-circle" size={18} color={COLORS.primaire} />
               <Text style={styles.texteProduit}>{produit}</Text>
@@ -180,7 +241,9 @@ export default function OfferDetailScreen({ route, navigation }) {
           {reservation ? (
             <ActivityIndicator color={COLORS.blanc} />
           ) : (
-            <Text style={styles.texteBouton}>Je réserve ce panier</Text>
+            <Text style={styles.texteBouton}>
+              {paiementActif ? `Payer ${offre.prixReduit.toFixed(2)} €` : 'Je réserve ce panier'}
+            </Text>
           )}
         </TouchableOpacity>
       </View>

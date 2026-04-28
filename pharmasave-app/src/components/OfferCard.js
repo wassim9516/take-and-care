@@ -98,8 +98,13 @@ export default function OfferCard({ offre, onPress, estFavori = false, onToggleF
 
         </View>
 
-        {/* Heure de retrait */}
-        <Text style={styles.heureRetrait}>⏰ Retrait : {offre.heureRetrait}</Text>
+        {/* Heure de retrait + distance */}
+        <View style={styles.ligneBasCarte}>
+          <Text style={styles.heureRetrait}>⏰ {offre.heureRetrait}</Text>
+          {offre.distance != null && (
+            <Text style={styles.distance}>📍 {offre.distance} km</Text>
+          )}
+        </View>
 
       </View>
     </TouchableOpacity>
@@ -206,8 +211,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  ligneBasCarte: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 2,
+  },
   heureRetrait: {
     fontSize: 12,
     color: COLORS.texteClair,
+  },
+  distance: {
+    fontSize: 12,
+    color: COLORS.primaire,
+    fontWeight: '600',
   },
 });

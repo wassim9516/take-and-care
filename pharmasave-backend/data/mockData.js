@@ -56,6 +56,17 @@ const pharmacies = [
     horaires: 'Lun-Sam 9h-20h',
     note: 4.8,
   },
+  {
+    id: 5,
+    nom: 'Pharmacie du JoyBoyy',
+    adresse: '39 Rue du Docteur Babinsky , 75018 Paris',
+    telephone: '01 42 71 45 90',
+    latitude: 48.901283772626776,
+    longitude:  2.3334764683301743,
+    image: 'https://images.unsplash.com/photo-1631549916768-4119b2e5f926?w=400',
+    horaires: 'Lun-Sam 9h-20h',
+    note: 4.8,
+  },
 ];
 
 // Liste des offres/paniers disponibles
@@ -147,6 +158,26 @@ const offers = [
     id: 5,
     pharmacieId: 2,
     pharmacieNom: 'Grande Pharmacie Centrale',
+    titre: 'Panier Bébé & Maternité',
+    description: 'Produits de soin pour bébé des meilleures marques. Doux et testés dermatologiquement.',
+    produits: [
+      'Liniment Biolane 400ml',
+      'Crème change Mustela 150ml',
+      'Eau micellaire bébé 500ml',
+    ],
+    prixOriginal: 28.00,
+    prixReduit: 9.00,
+    quantiteDisponible: 4,
+    datePeremption: '2025-07-01',
+    categorie: 'bebe',
+    image: 'https://images.unsplash.com/photo-1515488042361-ee00e0ddd4e4?w=400',
+    heureRetrait: '09h00 - 12h00',
+    actif: true,
+  },
+  {
+    id: 6,
+    pharmacieId: 5,
+    pharmacieNom: 'Pharmacie du JoyBoyy',
     titre: 'Panier Bébé & Maternité',
     description: 'Produits de soin pour bébé des meilleures marques. Doux et testés dermatologiquement.',
     produits: [
