@@ -4,7 +4,11 @@
 
 const express        = require('express');
 const router         = express.Router();
-const stripe         = require('stripe')(process.env.STRIPE_SECRET_KEY);
+let stripe = null;
+if (process.env.STRIPE_SECRET_KEY) {
+  const Stripe = require('stripe');
+  stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+}
 const authMiddleware = require('../middleware/auth');
 const { Offre, Pharmacie } = require('../database/models');
 
@@ -16,6 +20,7 @@ const COMMISSION_TAUX = parseFloat(process.env.COMMISSION_TAUX || '0.10');
 // Body : { offreId }
 // -------------------------------------------------------
 router.post('/intent', authMiddleware, async (req, res) => {
+  if (!stripe) return res.status(503).json({ erreur: 'Paiements non configurés sur ce serveur.' });
   const { offreId } = req.body;
   if (!offreId) return res.status(400).json({ erreur: 'offreId requis.' });
 
@@ -68,6 +73,7 @@ router.post('/intent', authMiddleware, async (req, res) => {
 // Génère un lien Stripe Connect Express pour la pharmacie
 // -------------------------------------------------------
 router.post('/onboarding', authMiddleware, async (req, res) => {
+  if (!stripe) return res.status(503).json({ erreur: 'Paiements non configurés sur ce serveur.' });
   const pharmacieId = req.utilisateur.pharmacieId;
   if (!pharmacieId) return res.status(403).json({ erreur: 'Compte non lié à une pharmacie.' });
 
@@ -88,10 +94,11 @@ router.post('/onboarding', authMiddleware, async (req, res) => {
       await pharmacie.update({ stripeAccountId });
     }
 
+    const frontendUrl = process.env.FRONTEND_URL || process.env.BACKEND_URL;
     const lien = await stripe.accountLinks.create({
       account:     stripeAccountId,
-      refresh_url: `${process.env.BACKEND_URL}/dashboard`,
-      return_url:  `${process.env.BACKEND_URL}/dashboard`,
+      refresh_url: `${frontendUrl}/dashboard`,
+      return_url:  `${frontendUrl}/dashboard`,
       type:        'account_onboarding',
     });
 
@@ -107,6 +114,7 @@ router.post('/onboarding', authMiddleware, async (req, res) => {
 // Retourne le statut du compte Stripe Connect de la pharmacie
 // -------------------------------------------------------
 router.get('/compte', authMiddleware, async (req, res) => {
+  if (!stripe) return res.json({ connecte: false });
   const pharmacieId = req.utilisateur.pharmacieId;
   if (!pharmacieId) return res.status(403).json({ erreur: 'Compte non lié à une pharmacie.' });
 

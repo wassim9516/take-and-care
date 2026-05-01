@@ -28,6 +28,8 @@ router.get('/', async (req, res) => {
     const aujourdhui = new Date();
     aujourdhui.setHours(0, 0, 0, 0);
 
+    const CATEGORIES_VALIDES = ['soin_visage', 'soin_corps', 'complement', 'bebe', 'solaire'];
+
     const where = {
       actif: true,
       [Op.or]: [
@@ -35,7 +37,12 @@ router.get('/', async (req, res) => {
         { datePeremption: { [Op.gte]: aujourdhui } },
       ],
     };
-    if (req.query.categorie) where.categorie = req.query.categorie;
+    if (req.query.categorie) {
+      if (!CATEGORIES_VALIDES.includes(req.query.categorie)) {
+        return res.status(400).json({ erreur: 'Catégorie invalide.' });
+      }
+      where.categorie = req.query.categorie;
+    }
 
     const { count, rows } = await Offre.findAndCountAll({
       where,
@@ -96,6 +103,21 @@ router.post('/', authMiddleware, async (req, res) => {
   if (!pharmacieId) {
     return res.status(403).json({ erreur: 'Compte non lié à une pharmacie.' });
   }
+
+  const { titre, prixOriginal, prixReduit } = req.body;
+  if (!titre || !titre.trim()) {
+    return res.status(400).json({ erreur: 'Le titre de l\'offre est obligatoire.' });
+  }
+  if (prixOriginal === undefined || prixOriginal === null || isNaN(parseFloat(prixOriginal))) {
+    return res.status(400).json({ erreur: 'Le prix original est obligatoire.' });
+  }
+  if (prixReduit === undefined || prixReduit === null || isNaN(parseFloat(prixReduit))) {
+    return res.status(400).json({ erreur: 'Le prix réduit est obligatoire.' });
+  }
+  if (parseFloat(prixReduit) > parseFloat(prixOriginal)) {
+    return res.status(400).json({ erreur: 'Le prix réduit ne peut pas être supérieur au prix original.' });
+  }
+
   try {
     const pharmacie = await Pharmacie.findByPk(pharmacieId);
     const offre = await Offre.create({ ...req.body, pharmacieId });

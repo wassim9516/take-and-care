@@ -6,19 +6,35 @@ const express  = require('express');
 const router   = express.Router();
 const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
+const validator = require('validator');
 const sequelize = require('../database/connection');
 const { Utilisateur, Pharmacie } = require('../database/models');
 const { envoyerSMS, normaliserTelephone } = require('../utils/sms');
+
+function validerChampTexte(valeur, min, max, nom) {
+  if (!valeur || typeof valeur !== 'string') return `${nom} est obligatoire.`;
+  const v = valeur.trim();
+  if (v.length < min) return `${nom} doit faire au moins ${min} caractères.`;
+  if (v.length > max) return `${nom} ne peut pas dépasser ${max} caractères.`;
+  return null;
+}
 
 // Stockage temporaire des codes de vérification en mémoire
 // { telephone_normalisé: { code, expireAt, donnees } }
 const codesVerification = new Map();
 
-// Nettoyage automatique des codes expirés toutes les 15 minutes
+// Rate-limit SMS : max 3 demandes par 10 min par numéro
+// { telephone_normalisé: { count, resetAt } }
+const rateLimitSMS = new Map();
+
+// Nettoyage automatique des codes expirés et des entrées rate-limit toutes les 15 minutes
 setInterval(() => {
   const now = Date.now();
   for (const [cle, val] of codesVerification.entries()) {
     if (val.expireAt < now) codesVerification.delete(cle);
+  }
+  for (const [cle, val] of rateLimitSMS.entries()) {
+    if (val.resetAt < now) rateLimitSMS.delete(cle);
   }
 }, 15 * 60 * 1000);
 
@@ -30,13 +46,18 @@ setInterval(() => {
 router.post('/inscription', async (req, res) => {
   const { prenom, nom, email, motDePasse, telephone } = req.body;
 
-  // Validation basique des champs obligatoires
-  if (!prenom || !nom || !email || !motDePasse || !telephone) {
-    return res.status(400).json({ erreur: 'Tous les champs sont obligatoires.' });
+  const errPrenom = validerChampTexte(prenom, 2, 50, 'Prénom');
+  const errNom    = validerChampTexte(nom, 2, 50, 'Nom');
+  if (errPrenom) return res.status(400).json({ erreur: errPrenom });
+  if (errNom)    return res.status(400).json({ erreur: errNom });
+  if (!email || !validator.isEmail(String(email))) {
+    return res.status(400).json({ erreur: 'Email invalide.' });
   }
-
-  if (motDePasse.length < 6) {
+  if (!motDePasse || motDePasse.length < 6) {
     return res.status(400).json({ erreur: 'Le mot de passe doit faire au moins 6 caractères.' });
+  }
+  if (!telephone) {
+    return res.status(400).json({ erreur: 'Téléphone obligatoire.' });
   }
 
   try {
@@ -227,11 +248,18 @@ router.put('/push-token', authMiddleware, async (req, res) => {
 router.post('/demander-verification', async (req, res) => {
   const { prenom, nom, email, motDePasse, telephone } = req.body;
 
-  if (!prenom || !nom || !email || !motDePasse || !telephone) {
-    return res.status(400).json({ erreur: 'Tous les champs sont obligatoires.' });
+  const errPrenom = validerChampTexte(prenom, 2, 50, 'Prénom');
+  const errNom    = validerChampTexte(nom, 2, 50, 'Nom');
+  if (errPrenom) return res.status(400).json({ erreur: errPrenom });
+  if (errNom)    return res.status(400).json({ erreur: errNom });
+  if (!email || !validator.isEmail(String(email))) {
+    return res.status(400).json({ erreur: 'Email invalide.' });
   }
-  if (motDePasse.length < 6) {
+  if (!motDePasse || motDePasse.length < 6) {
     return res.status(400).json({ erreur: 'Le mot de passe doit faire au moins 6 caractères.' });
+  }
+  if (!telephone) {
+    return res.status(400).json({ erreur: 'Téléphone obligatoire.' });
   }
 
   try {
@@ -243,8 +271,21 @@ router.post('/demander-verification', async (req, res) => {
 
     const numeroNormalise = normaliserTelephone(telephone);
 
-    // Génère un code à 6 chiffres valable 10 minutes
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    // Rate-limit : max 3 SMS par 10 minutes pour ce numéro
+    const rl = rateLimitSMS.get(numeroNormalise);
+    if (rl) {
+      if (rl.count >= 3) {
+        const attente = Math.ceil((rl.resetAt - Date.now()) / 60000);
+        return res.status(429).json({ erreur: `Trop de tentatives. Réessaie dans ${attente} minute(s).` });
+      }
+      rl.count++;
+    } else {
+      rateLimitSMS.set(numeroNormalise, { count: 1, resetAt: Date.now() + 10 * 60 * 1000 });
+    }
+
+    // Génère un code à 6 chiffres cryptographiquement sûr valable 10 minutes
+    const { randomInt } = require('crypto');
+    const code = String(randomInt(100000, 999999));
     codesVerification.set(numeroNormalise, {
       code,
       expireAt: Date.now() + 10 * 60 * 1000,
@@ -351,6 +392,12 @@ router.post('/inscription-pharmacien', async (req, res) => {
     return res.status(400).json({ erreur: 'Le mot de passe doit faire au moins 6 caractères.' });
   }
 
+  const lat = parseFloat(latitude);
+  const lng = parseFloat(longitude);
+  if (!latitude || !longitude || isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return res.status(400).json({ erreur: 'Latitude et longitude valides sont obligatoires pour la pharmacie.' });
+  }
+
   try {
     // Vérifie si l'email est déjà utilisé
     const existant = await Utilisateur.findOne({ where: { email } });
@@ -367,8 +414,8 @@ router.post('/inscription-pharmacien', async (req, res) => {
         adresse,
         telephone: telephone || '',
         horaires:  horaires  || '',
-        latitude:  parseFloat(latitude)  || 48.8566, // Paris par défaut
-        longitude: parseFloat(longitude) || 2.3522,
+        latitude:  lat,
+        longitude: lng,
         note: 0,
       }, { transaction: t });
 

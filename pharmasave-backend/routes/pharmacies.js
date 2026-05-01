@@ -21,14 +21,16 @@ router.get('/', async (req, res) => {
 router.get('/nearby', async (req, res) => {
   const { lat, lng } = req.query;
 
-  if (!lat || !lng) {
-    return res.status(400).json({ erreur: 'Paramètres lat et lng requis.' });
+  const latitude  = parseFloat(lat);
+  const longitude = parseFloat(lng);
+
+  if (!lat || !lng || isNaN(latitude) || isNaN(longitude) ||
+      latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    return res.status(400).json({ erreur: 'Coordonnées GPS invalides.' });
   }
 
   try {
     const pharmacies = await Pharmacie.findAll();
-    const latitude   = parseFloat(lat);
-    const longitude  = parseFloat(lng);
 
     const avecDistance = pharmacies.map(p => ({
       ...p.toJSON(),

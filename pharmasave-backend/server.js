@@ -4,8 +4,20 @@
 
 require('dotenv').config();
 
+// Vérification des variables d'environnement critiques au démarrage
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'pharmasave_secret_key_change_moi_en_prod') {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('❌ JWT_SECRET non défini ou non changé. Arrêt du serveur.');
+    process.exit(1);
+  } else {
+    console.warn('⚠️  JWT_SECRET par défaut détecté — change-le avant de déployer !');
+  }
+}
+
 const express       = require('express');
 const cors          = require('cors');
+const helmet        = require('helmet');
+const path          = require('path');
 const rateLimit     = require('express-rate-limit');
 const sequelize     = require('./database/connection');
 
@@ -23,9 +35,40 @@ const PORT = process.env.PORT || 3000;
 // -------------------------------------------------------
 // MIDDLEWARE
 // -------------------------------------------------------
-app.use(cors());
-app.use(express.json());
-app.use('/uploads', express.static('uploads'));
+
+// Headers de sécurité HTTP
+app.use(helmet());
+
+// CORS restrictif — seuls les domaines autorisés peuvent appeler l'API
+const originesAutorisees = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
+// En développement, autoriser aussi les origines locales
+if (process.env.NODE_ENV !== 'production') {
+  originesAutorisees.push(
+    'http://localhost:3001',
+    'http://localhost:8081',
+    'http://192.168.1.99:3001',
+  );
+}
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Autoriser les requêtes sans origin (app mobile, Postman)
+    if (!origin) return callback(null, true);
+    if (originesAutorisees.length === 0 || originesAutorisees.includes(origin)) {
+      return callback(null, true);
+    }
+    callback(new Error(`Origine non autorisée : ${origin}`));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
+app.use(express.json({ limit: '2mb' }));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Rate limiting — auth : 15 tentatives / 15 min par IP
 const limiteAuth = rateLimit({
@@ -65,7 +108,11 @@ app.use('/api/paiements',   limiteAPI,  paiementsRouter);
 // Attrape toutes les erreurs non gérées dans les routes
 // -------------------------------------------------------
 app.use((err, req, res, next) => {
-  console.error('Erreur non gérée :', err.stack);
+  if (process.env.NODE_ENV === 'development') {
+    console.error('Erreur non gérée :', err.stack);
+  } else {
+    console.error('Erreur non gérée :', err.message);
+  }
   res.status(500).json({ erreur: 'Erreur serveur inattendue.' });
 });
 
@@ -81,7 +128,7 @@ sequelize.authenticate()
   .then(() => {
     app.listen(PORT, () => {
       console.log(`🚀 Serveur lancé sur http://localhost:${PORT}`);
-      console.log(`   Depuis iPhone : http://10.30.29.232:${PORT}`);
+      console.log(`   Depuis iPhone : http://${process.env.BACKEND_URL?.replace(/https?:\/\//, '').replace(/:.*/, '') || '192.168.1.99'}:${PORT}`);
     });
   })
   .catch(err => {

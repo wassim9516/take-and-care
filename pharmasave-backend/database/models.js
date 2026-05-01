@@ -163,6 +163,7 @@ const Reservation = sequelize.define('Reservation', {
   },
   numero: {
     type: DataTypes.STRING,
+    allowNull: false,
     unique: true,
   },
   // Note laissée par le client après retrait (1-5, null = pas encore noté)
@@ -182,6 +183,7 @@ const Reservation = sequelize.define('Reservation', {
   stripePaymentIntentId: {
     type: DataTypes.STRING,
     allowNull: true,
+    unique: true,
   },
   commission: {
     type: DataTypes.FLOAT,
@@ -215,7 +217,12 @@ const Favori = sequelize.define('Favori', {
     type: DataTypes.INTEGER,
     allowNull: false,
   },
-}, { tableName: 'favoris' });
+}, {
+  tableName: 'favoris',
+  indexes: [
+    { fields: ['utilisateurId', 'offreId'], unique: true },
+  ],
+});
 
 // -------------------------------------------------------
 // RELATIONS entre les tables

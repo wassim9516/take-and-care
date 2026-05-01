@@ -10,12 +10,20 @@ const authMiddleware = require('../middleware/auth');
 const { Reservation, Offre, Pharmacie, Utilisateur } = require('../database/models');
 const sequelize      = require('../database/connection');
 const { Op }         = require('sequelize');
-const stripe         = require('stripe')(process.env.STRIPE_SECRET_KEY);
+let stripe = null;
+if (process.env.STRIPE_SECRET_KEY) {
+  const Stripe = require('stripe');
+  stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+}
 
 const COMMISSION_TAUX = parseFloat(process.env.COMMISSION_TAUX || '0.10');
 
 // GET /api/reservations/pharmacie/:pharmacieId — Réservations pour le dashboard pharmacien
 router.get('/pharmacie/:pharmacieId', authMiddleware, async (req, res) => {
+  // Vérifier que le pharmacien connecté est bien propriétaire de cette pharmacie
+  if (Number(req.utilisateur.pharmacieId) !== Number(req.params.pharmacieId)) {
+    return res.status(403).json({ erreur: 'Accès refusé.' });
+  }
   try {
     const reservations = await Reservation.findAll({
       include: [
@@ -56,6 +64,14 @@ router.post('/', authMiddleware, async (req, res) => {
       // Vérifie que le PaymentIntent correspond bien à cet utilisateur et cette offre
       if (intent.metadata?.offreId !== String(offreId) || intent.metadata?.utilisateurId !== String(utilisateurId)) {
         return res.status(403).json({ erreur: 'PaymentIntent invalide.' });
+      }
+      // Vérifie que le montant payé correspond au prix réel de l'offre
+      const offreVerif = await Offre.findByPk(offreId);
+      if (offreVerif) {
+        const montantAttenduCentimes = Math.round(offreVerif.prixReduit * 100);
+        if (intent.amount !== montantAttenduCentimes) {
+          return res.status(402).json({ erreur: 'Montant du paiement incorrect.' });
+        }
       }
       // Empêche la réutilisation d'un PaymentIntent
       const dejaUtilise = await Reservation.findOne({ where: { stripePaymentIntentId: paymentIntentId } });
@@ -188,8 +204,10 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
     // Remet le stock disponible + annulation dans une transaction
     await sequelize.transaction(async (t) => {
-      await reservation.offre.update(
-        { quantiteDisponible: reservation.offre.quantiteDisponible + 1 },
+      // Re-lit l'offre avec un verrou pour éviter la race condition
+      const offre = await Offre.findByPk(reservation.offreId, { lock: t.LOCK.UPDATE, transaction: t });
+      await offre.update(
+        { quantiteDisponible: offre.quantiteDisponible + 1 },
         { transaction: t }
       );
       await reservation.update({ statut: 'annulee' }, { transaction: t });
