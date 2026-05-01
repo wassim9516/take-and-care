@@ -11,13 +11,14 @@ let sequelize;
 
 if (process.env.DATABASE_URL) {
   // Mode Railway / production
+  const isInternalUrl = process.env.DATABASE_URL.includes('.railway.internal');
   sequelize = new Sequelize(process.env.DATABASE_URL, {
     dialect: 'postgres',
     logging: false,
-    dialectOptions: {
+    dialectOptions: isInternalUrl ? {} : {
       ssl: {
         require: true,
-        rejectUnauthorized: false, // Requis pour Railway PostgreSQL
+        rejectUnauthorized: false,
       },
     },
   });
