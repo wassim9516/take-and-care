@@ -13,9 +13,11 @@
 // ============================================================
 
 export const CONFIG = {
-  API_URL: 'http://10.30.1.65:3000/api',
+  API_URL: 'https://invigorating-recreation-production-2e16.up.railway.app/api',
   RAYON_RECHERCHE: 5,
   // Clé publique Stripe (commence par pk_test_ ou pk_live_)
   // Récupère-la sur https://dashboard.stripe.com/apikeys
-  STRIPE_PUBLISHABLE_KEY: 'pk_test_51TRCQ1FFctA1LMICB6vSmxbsU3wPr2lEb6CHb06HG2Y1dYVxXGppqDcCMsXwoZA2WpccJ5WsYAdz1sbhfeMwKPSy00qLwqH9u9',
+  // ⚠️  Laisser vide ('') pour tester dans Expo Go (Stripe nécessite un Dev Build)
+  // ⚠️  Remettre la clé pour un vrai build (EAS Build / expo prebuild)
+  STRIPE_PUBLISHABLE_KEY: '',
 };
