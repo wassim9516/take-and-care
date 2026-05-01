@@ -32,6 +32,9 @@ const paiementsRouter    = require('./routes/paiements');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
+// Nécessaire sur Railway/Heroku — le serveur est derrière un reverse proxy
+app.set('trust proxy', 1);
+
 // -------------------------------------------------------
 // MIDDLEWARE
 // -------------------------------------------------------
