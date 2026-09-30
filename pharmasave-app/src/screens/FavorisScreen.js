@@ -5,7 +5,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, FlatList, StyleSheet,
-  ActivityIndicator, RefreshControl,
+  ActivityIndicator, RefreshControl, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -30,7 +30,9 @@ export default function FavorisScreen({ navigation }) {
     try {
       const data = await getMesFavoris();
       setOffres(data);
-    } catch {
+    } catch (err) {
+      console.error('Erreur chargement favoris:', err);
+      Alert.alert('Erreur', 'Impossible de charger tes favoris. Vérifie ta connexion.');
     } finally {
       setChargement(false);
       setRafraichissement(false);
@@ -73,7 +75,7 @@ export default function FavorisScreen({ navigation }) {
               offre={item}
               estFavori={favorisIds.includes(item.id)}
               onToggleFavori={() => handleToggle(item.id)}
-              onPress={() => navigation.navigate('OfferDetail', { offerId: item.id })}
+              onPress={() => navigation.navigate('OfferDetail', { offerId: item.id, offreData: item })}
             />
           )}
           contentContainerStyle={styles.liste}

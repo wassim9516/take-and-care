@@ -52,18 +52,28 @@ export default function MapScreen({ navigation }) {
         return;
       }
 
+      let coordonnees;
       try {
         // Obtenir la position actuelle
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         if (!loc?.coords) throw new Error('Position indisponible.');
-        const { latitude, longitude } = loc.coords;
-        setPosition({ latitude, longitude });
+        coordonnees = loc.coords;
+        setPosition(coordonnees);
+      } catch (erreur) {
+        Alert.alert('Localisation', 'Impossible d\'obtenir ta position GPS.');
+        setChargement(false);
+        return;
+      }
 
+      try {
         // Charger les pharmacies proches
-        const data = await getPharmaciesProches(latitude, longitude);
+        const data = await getPharmaciesProches(coordonnees.latitude, coordonnees.longitude);
         setPharmacies(data);
       } catch (erreur) {
-        Alert.alert('Erreur', 'Impossible d\'obtenir ta position.');
+        Alert.alert(
+          'Serveur inaccessible',
+          'Impossible de charger les pharmacies. Vérifie que le backend est lancé et que l\'IP dans config.js est correcte.'
+        );
         console.error(erreur);
       } finally {
         setChargement(false);
@@ -126,7 +136,7 @@ export default function MapScreen({ navigation }) {
         />
 
         {/* Marqueurs filtrés selon le rayon choisi */}
-        {pharmacies.filter(p => p.distance == null || p.distance <= rayonKm).map((pharmacie) => (
+        {pharmacies.filter(p => p.distance === null || p.distance === undefined || p.distance <= rayonKm).map((pharmacie) => (
           <Marker
             key={pharmacie.id}
             coordinate={{
@@ -175,10 +185,11 @@ export default function MapScreen({ navigation }) {
             <TouchableOpacity
               style={[styles.bouton, styles.boutonSecondaire]}
               onPress={() => {
+                const nomPharmacie = pharmacieSelectionnee.nom;
                 setPharmacieSelectionnee(null);
                 navigation.navigate('Offres', {
                   screen: 'Accueil',
-                  params: { pharmacieNom: pharmacieSelectionnee.nom },
+                  params: { pharmacieNom: nomPharmacie },
                 });
               }}
             >
@@ -202,10 +213,10 @@ export default function MapScreen({ navigation }) {
         // Liste rapide des pharmacies proches
         <View style={styles.panneau}>
           <Text style={styles.titrePanneau}>
-            {(() => { const n = pharmacies.filter(p => p.distance == null || p.distance <= rayonKm).length; return `${n} pharmacie${n > 1 ? 's' : ''} dans un rayon de ${rayonKm} km`; })()}
+            {(() => { const n = pharmacies.filter(p => p.distance === null || p.distance === undefined || p.distance <= rayonKm).length; return `${n} pharmacie${n > 1 ? 's' : ''} dans un rayon de ${rayonKm} km`; })()}
           </Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.listeHorizontale}>
-            {pharmacies.filter(p => p.distance == null || p.distance <= rayonKm).map((p) => (
+            {pharmacies.filter(p => p.distance === null || p.distance === undefined || p.distance <= rayonKm).map((p) => (
               <TouchableOpacity
                 key={p.id}
                 style={styles.cartePharmacieMin}

@@ -68,7 +68,7 @@ export default function PharmacieScreen({ navigation, route }) {
         key={i}
         name={i <= Math.round(note || 0) ? 'star' : 'star-outline'}
         size={14}
-        color="#F1C40F"
+        color="#0ff157"
         style={{ marginRight: 2 }}
       />
     ));
@@ -179,7 +179,7 @@ export default function PharmacieScreen({ navigation, route }) {
                 offre={{ ...offre, pharmacieNom: pharmacie.nom }}
                 estFavori={favorisIds.includes(offre.id)}
                 onToggleFavori={() => toggleFavori(offre.id)}
-                onPress={() => navigation.navigate('OfferDetail', { offerId: offre.id })}
+                onPress={() => navigation.navigate('OfferDetail', { offerId: offre.id, offreData: { ...offre, pharmacieNom: pharmacie.nom } })}
               />
             ))
           )}

@@ -21,7 +21,9 @@ export function FavorisProvider({ children }) {
     try {
       const ids = await getFavorisIds();
       setFavorisIds(ids);
-    } catch {}
+    } catch (err) {
+      console.error('Erreur chargement IDs favoris:', err);
+    }
   };
 
   const toggleFavori = async (offreId) => {

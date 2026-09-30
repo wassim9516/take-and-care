@@ -125,21 +125,6 @@ function AppPrincipale() {
 // -------------------------------------------------------
 function Routeur() {
   const { estConnecte, chargement, erreurReseau, retenterConnexion } = useAuth();
-
-  if (erreurReseau) {
-    return (
-      <View style={stylesErreur.conteneur}>
-        <MaterialCommunityIcons name="wifi-off" size={64} color={COLORS.texteClair} />
-        <Text style={stylesErreur.titre}>Serveur inaccessible</Text>
-        <Text style={stylesErreur.message}>
-          Vérifie que le backend est lancé et que ton téléphone est sur le même réseau Wi-Fi.
-        </Text>
-        <TouchableOpacity style={stylesErreur.bouton} onPress={retenterConnexion}>
-          <Text style={stylesErreur.texteBouton}>Réessayer</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
   const [onboardingFait, setOnboardingFait] = useState(null); // null = chargement
 
   useEffect(() => {
@@ -166,6 +151,21 @@ function Routeur() {
     await AsyncStorage.setItem('onboarding_done', 'true');
     setOnboardingFait(true);
   };
+
+  if (erreurReseau) {
+    return (
+      <View style={stylesErreur.conteneur}>
+        <MaterialCommunityIcons name="wifi-off" size={64} color={COLORS.texteClair} />
+        <Text style={stylesErreur.titre}>Serveur inaccessible</Text>
+        <Text style={stylesErreur.message}>
+          Vérifie que le backend est lancé et que ton téléphone est sur le même réseau Wi-Fi.
+        </Text>
+        <TouchableOpacity style={stylesErreur.bouton} onPress={retenterConnexion}>
+          <Text style={stylesErreur.texteBouton}>Réessayer</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (chargement || onboardingFait === null) {
     return (
@@ -198,13 +198,23 @@ const stylesErreur = StyleSheet.create({
 
 // AuthProvider enveloppe tout pour rendre le contexte accessible partout
 export default function App() {
+  const contenu = (
+    <AuthProvider>
+      <FavorisProvider>
+        <Routeur />
+      </FavorisProvider>
+    </AuthProvider>
+  );
+
+  // Stripe nécessite un Dev Build (pas compatible Expo Go)
+  // Si la clé est absente → on lance l'app sans StripeProvider
+  if (!CONFIG.STRIPE_PUBLISHABLE_KEY) {
+    return contenu;
+  }
+
   return (
     <StripeProvider publishableKey={CONFIG.STRIPE_PUBLISHABLE_KEY}>
-      <AuthProvider>
-        <FavorisProvider>
-          <Routeur />
-        </FavorisProvider>
-      </AuthProvider>
+      {contenu}
     </StripeProvider>
   );
 }

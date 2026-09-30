@@ -2,7 +2,7 @@
 // src/screens/HomeScreen.js — Écran principal (liste des offres)
 // ============================================================
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
   StyleSheet, ActivityIndicator, RefreshControl,
@@ -150,42 +150,44 @@ export default function HomeScreen({ navigation, route }) {
   };
 
   // -------------------------------------------------------
-  // Filtrage + tri
+  // Filtrage + tri — mémoïsé pour éviter les recalculs inutiles
   // -------------------------------------------------------
-  const offresFiltrees = offres
-    .filter(o => {
-      if (filtrePharmacieNom && (o.pharmacieNom || '') !== filtrePharmacieNom) return false;
-      if (maxPrix !== null && o.prixReduit > maxPrix) return false;
-      if (!recherche.trim()) return true;
-      const terme = recherche.toLowerCase();
-      return (
-        o.titre.toLowerCase().includes(terme) ||
-        (o.pharmacieNom || '').toLowerCase().includes(terme)
-      );
-    })
-    .map(o => ({
-      ...o,
-      distance: calculerDistance(
-        position?.latitude, position?.longitude,
-        o.pharmacieLat, o.pharmacieLng
-      ),
-    }))
-    .sort((a, b) => {
-      if (tri === 'prix')     return a.prixReduit - b.prixReduit;
-      if (tri === 'distance') {
-        if (a.distance === null) return 1;
-        if (b.distance === null) return -1;
-        return a.distance - b.distance;
-      }
-      return 0; // 'recent' : déjà trié par le backend
-    });
+  const offresFiltrees = useMemo(() => {
+    return offres
+      .filter(o => {
+        if (filtrePharmacieNom && (o.pharmacieNom || '') !== filtrePharmacieNom) return false;
+        if (maxPrix !== null && o.prixReduit > maxPrix) return false;
+        if (!recherche.trim()) return true;
+        const terme = recherche.toLowerCase();
+        return (
+          o.titre.toLowerCase().includes(terme) ||
+          (o.pharmacieNom || '').toLowerCase().includes(terme)
+        );
+      })
+      .map(o => ({
+        ...o,
+        distance: calculerDistance(
+          position?.latitude, position?.longitude,
+          o.pharmacieLat, o.pharmacieLng
+        ),
+      }))
+      .sort((a, b) => {
+        if (tri === 'prix')     return a.prixReduit - b.prixReduit;
+        if (tri === 'distance') {
+          if (a.distance === null) return 1;
+          if (b.distance === null) return -1;
+          return a.distance - b.distance;
+        }
+        return 0; // 'recent' : déjà trié par le backend
+      });
+  }, [offres, filtrePharmacieNom, maxPrix, recherche, position, tri]);
 
   const renderOffre = ({ item }) => (
     <OfferCard
       offre={item}
       estFavori={favorisIds.includes(item.id)}
       onToggleFavori={() => toggleFavori(item.id)}
-      onPress={() => navigation.navigate('OfferDetail', { offerId: item.id })}
+      onPress={() => navigation.navigate('OfferDetail', { offerId: item.id, offreData: item })}
     />
   );
 

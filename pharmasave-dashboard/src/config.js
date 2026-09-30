@@ -3,5 +3,5 @@
 // ============================================================
 
 export const CONFIG = {
-  API_URL: 'http://127.0.0.1:3000/api',
+  API_URL: 'https://invigorating-recreation-production-2e16.up.railway.app/api',
 };

@@ -3,7 +3,7 @@
 // ============================================================
 
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import { connexionPharmacien, inscriptionPharmacien } from '../api/client';
+import { connexionPharmacien, inscriptionPharmacien, setDeconnexionCallback, getMoi } from '../api/client';
 
 const AuthContext = createContext(null);
 
@@ -11,19 +11,31 @@ export function AuthProvider({ children }) {
   const [pharmacien, setPharmacien] = useState(null);
   const [chargement, setChargement] = useState(true);
 
-  // Vérifie si déjà connecté au démarrage
+  // Enregistre le callback de déconnexion automatique (token expiré → 401)
   useEffect(() => {
-    const token = localStorage.getItem('token_pharmacien');
-    const data  = localStorage.getItem('pharmacien_data');
-    if (token && data) {
+    setDeconnexionCallback(() => setPharmacien(null));
+  }, []);
+
+  // Vérifie si déjà connecté au démarrage en validant le token auprès du serveur
+  useEffect(() => {
+    const verifierToken = async () => {
+      const token = localStorage.getItem('token_pharmacien');
+      if (!token) {
+        setChargement(false);
+        return;
+      }
       try {
-        setPharmacien(JSON.parse(data));
+        const utilisateur = await getMoi();
+        setPharmacien(utilisateur);
       } catch {
+        // Token invalide ou expiré → nettoyage
         localStorage.removeItem('token_pharmacien');
         localStorage.removeItem('pharmacien_data');
+      } finally {
+        setChargement(false);
       }
-    }
-    setChargement(false);
+    };
+    verifierToken();
   }, []);
 
   const seConnecter = async (email, motDePasse) => {

@@ -99,13 +99,35 @@ export default function Dashboard() {
       setReservations(dataResas);
       setDerniereMAJ(new Date());
     } catch (err) {
-      console.error(err);
+      console.error('Erreur chargement dashboard:', err);
     } finally {
       setChargement(false);
     }
   }, [pharmacieId]);
 
-  useEffect(() => { chargerDonnees(); }, [chargerDonnees]);
+  useEffect(() => {
+    let monte = true;
+    const charger = async () => {
+      if (!pharmacieId) return;
+      setChargement(true);
+      try {
+        const [dataOffres, dataResas] = await Promise.all([
+          getOffresPharmacien(pharmacieId),
+          getReservationsPharmacien(pharmacieId),
+        ]);
+        if (!monte) return;
+        setOffres(dataOffres);
+        setReservations(dataResas);
+        setDerniereMAJ(new Date());
+      } catch (err) {
+        console.error('Erreur chargement initial dashboard:', err);
+      } finally {
+        if (monte) setChargement(false);
+      }
+    };
+    charger();
+    return () => { monte = false; };
+  }, [pharmacieId]);
 
   // Rafraîchissement automatique toutes les 60 secondes
   useEffect(() => {

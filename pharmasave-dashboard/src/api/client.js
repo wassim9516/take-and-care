@@ -10,6 +10,10 @@ const api = axios.create({
   timeout: 8000,
 });
 
+// Callback enregistré par AuthContext pour déconnecter le pharmacien sur 401
+let _onDeconnexion = null;
+export const setDeconnexionCallback = (fn) => { _onDeconnexion = fn; };
+
 // Ajoute automatiquement le token JWT à chaque requête
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token_pharmacien');
@@ -17,13 +21,14 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Intercepte les 401 (token expiré) → redirige vers le login
+// Intercepte les 401 (token expiré) → déconnexion via le contexte
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token_pharmacien');
-      window.location.href = '/login';
+      localStorage.removeItem('pharmacien_data');
+      if (_onDeconnexion) _onDeconnexion();
     }
     return Promise.reject(error);
   }
@@ -34,6 +39,11 @@ api.interceptors.response.use(
 // -------------------------------------------------------
 export const connexionPharmacien = async (email, motDePasse) => {
   const response = await api.post('/auth/connexion', { email, motDePasse });
+  return response.data;
+};
+
+export const getMoi = async () => {
+  const response = await api.get('/auth/moi');
   return response.data;
 };
 

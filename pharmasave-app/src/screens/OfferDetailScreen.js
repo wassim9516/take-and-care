@@ -11,38 +11,61 @@ import {
   StyleSheet, ActivityIndicator, Alert, Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useStripe } from '@stripe/stripe-react-native';
 import { COLORS } from '../constants/colors';
 import { CONFIG } from '../config';
 import { getOffre, creerReservation, creerIntentPaiement } from '../api/client';
 
-export default function OfferDetailScreen({ route, navigation }) {
-  const { offerId } = route.params;
-  const { initPaymentSheet, presentPaymentSheet } = useStripe();
+const paiementActif = !!CONFIG.STRIPE_PUBLISHABLE_KEY;
 
-  const [offre, setOffre]             = useState(null);
-  const [chargement, setChargement]   = useState(true);
-  const [reservation, setReservation] = useState(false);
-  const paiementActif = !!CONFIG.STRIPE_PUBLISHABLE_KEY;
+// Import conditionnel Stripe — uniquement si la clé est configurée
+let useStripeHook = null;
+if (paiementActif) {
+  try {
+    const stripeModule = require('@stripe/stripe-react-native');
+    useStripeHook = stripeModule.useStripe;
+  } catch {
+    // Stripe non disponible (Expo Go)
+  }
+}
+
+export default function OfferDetailScreen({ route, navigation }) {
+  const { offerId, offreData } = route.params || {};
+
+  // Si les données sont déjà disponibles (passées depuis l'écran précédent),
+  // on les utilise directement sans appel réseau
+  const [offre, setOffre]           = useState(offreData || null);
+  const [chargement, setChargement] = useState(!offreData && !!offerId);
+
+  const appliquerOptions = (data) => {
+    navigation.setOptions({
+      title: data.titre,
+      headerRight: () => (
+        <TouchableOpacity onPress={() => partager(data)} style={{ paddingRight: 4 }}>
+          <Ionicons name="share-outline" size={24} color={COLORS.primaireF} />
+        </TouchableOpacity>
+      ),
+    });
+  };
 
   // -------------------------------------------------------
-  // Charger l'offre au montage du composant
+  // Charger l'offre si on n'a pas les données (navigation directe)
   // -------------------------------------------------------
   useEffect(() => {
+    if (offreData) {
+      appliquerOptions(offreData);
+      return;
+    }
     const charger = async () => {
       try {
         const data = await getOffre(offerId);
         setOffre(data);
-        navigation.setOptions({
-          title: data.titre,
-          headerRight: () => (
-            <TouchableOpacity onPress={() => partager(data)} style={{ paddingRight: 4 }}>
-              <Ionicons name="share-outline" size={24} color={COLORS.primaireF} />
-            </TouchableOpacity>
-          ),
-        });
-      } catch {
-        Alert.alert('Erreur', 'Impossible de charger les détails de cette offre.');
+        appliquerOptions(data);
+      } catch (err) {
+        const msg = err?.response?.data?.erreur
+          || (err?.code === 'ECONNABORTED' ? 'Délai dépassé — vérifie que le serveur est lancé et que l\'IP dans config.js est correcte.' : null)
+          || err?.message
+          || 'Impossible de charger les détails de cette offre.';
+        Alert.alert('Erreur réseau', msg);
         navigation.goBack();
       } finally {
         setChargement(false);
@@ -74,72 +97,6 @@ export default function OfferDetailScreen({ route, navigation }) {
     }
   };
 
-  // -------------------------------------------------------
-  // Gestion de la réservation
-  // -------------------------------------------------------
-  const handleReserver = async () => {
-    setReservation(true);
-    try {
-      if (paiementActif) {
-        // ── Flux avec paiement Stripe ──
-        const intent = await creerIntentPaiement(offre.id);
-
-        const { error: initError } = await initPaymentSheet({
-          paymentIntentClientSecret: intent.clientSecret,
-          merchantDisplayName: 'Take & Care',
-          style: 'alwaysLight',
-        });
-        if (initError) throw new Error(initError.message);
-
-        const { error: payError } = await presentPaymentSheet();
-        if (payError) {
-          if (payError.code !== 'Canceled') {
-            Alert.alert('Paiement refusé', payError.message);
-          }
-          return;
-        }
-
-        // Paiement réussi → confirmer la réservation
-        const resultat = await creerReservation(offre.id, intent.paymentIntentId);
-        Alert.alert(
-          '🎉 Réservation confirmée !',
-          `Numéro : ${resultat.reservation.numero}\n\nPasse à la pharmacie entre ${resultat.reservation.heureRetrait} avec ton numéro de réservation.`,
-          [{ text: 'Super !', onPress: () => navigation.goBack() }]
-        );
-      } else {
-        // ── Flux sans paiement (Stripe non configuré) ──
-        Alert.alert(
-          'Confirmer la réservation',
-          `Tu vas réserver "${offre.titre}" pour ${offre.prixReduit?.toFixed(2) ?? '0.00'}€.\n\nRetrait : ${offre.heureRetrait}`,
-          [
-            { text: 'Annuler', style: 'cancel', onPress: () => setReservation(false) },
-            {
-              text: 'Réserver !',
-              onPress: async () => {
-                try {
-                  const resultat = await creerReservation(offre.id);
-                  Alert.alert(
-                    '🎉 Réservation confirmée !',
-                    `Numéro : ${resultat.reservation.numero}\n\nPasse à la pharmacie entre ${resultat.reservation.heureRetrait} avec ton numéro de réservation.`,
-                    [{ text: 'Super !', onPress: () => navigation.goBack() }]
-                  );
-                } catch {
-                  Alert.alert('Erreur', 'La réservation a échoué. Réessaie.');
-                } finally {
-                  setReservation(false);
-                }
-              },
-            },
-          ]
-        );
-        return;
-      }
-    } catch (erreur) {
-      Alert.alert('Erreur', erreur?.response?.data?.erreur || 'La réservation a échoué. Réessaie.');
-    } finally {
-      setReservation(false);
-    }
-  };
 
   // -------------------------------------------------------
   // Rendu
@@ -203,12 +160,14 @@ export default function OfferDetailScreen({ route, navigation }) {
             <Text style={styles.texteInfo}>Retrait : {offre.heureRetrait}</Text>
           </View>
 
-          <View style={styles.ligneInfo}>
-            <Ionicons name="calendar-outline" size={18} color={COLORS.secondaire} />
-            <Text style={styles.texteInfo}>
-              Date de péremption : {new Date(offre.datePeremption).toLocaleDateString('fr-FR')}
-            </Text>
-          </View>
+          {offre.datePeremption && (
+            <View style={styles.ligneInfo}>
+              <Ionicons name="calendar-outline" size={18} color={COLORS.secondaire} />
+              <Text style={styles.texteInfo}>
+                Date de péremption : {new Date(offre.datePeremption).toLocaleDateString('fr-FR')}
+              </Text>
+            </View>
+          )}
 
           <View style={styles.ligneInfo}>
             <Ionicons name="basket-outline" size={18} color={COLORS.secondaire} />
@@ -223,31 +182,131 @@ export default function OfferDetailScreen({ route, navigation }) {
         </View>
       </ScrollView>
 
-      {/* Bouton de réservation (fixé en bas de l'écran) */}
-      <View style={styles.piedPage}>
-        <View style={styles.lignePresentation}>
-          <View>
-            <Text style={styles.labelPrix}>Prix total</Text>
-            <Text style={styles.prixOriginal}>{offre.prixOriginal.toFixed(2)}€</Text>
-          </View>
-          <Text style={styles.prixReduit}>{offre.prixReduit.toFixed(2)}€</Text>
-        </View>
+      {/* Pied de page : affiché par un sous-composant selon Stripe actif ou non */}
+      {paiementActif
+        ? <PiedPageStripe offre={offre} navigation={navigation} />
+        : <PiedPageSimple offre={offre} navigation={navigation} />
+      }
 
-        <TouchableOpacity
-          style={[styles.boutonReserver, reservation && styles.boutonDesactive]}
-          onPress={handleReserver}
-          disabled={reservation}
-        >
-          {reservation ? (
-            <ActivityIndicator color={COLORS.blanc} />
-          ) : (
-            <Text style={styles.texteBouton}>
-              {paiementActif ? `Payer ${offre.prixReduit.toFixed(2)} €` : 'Je réserve ce panier'}
-            </Text>
-          )}
-        </TouchableOpacity>
+    </View>
+  );
+}
+
+// -------------------------------------------------------
+// PiedPageStripe — utilise useStripe(), monté uniquement si Stripe est actif
+// Ce composant ne doit JAMAIS être rendu hors d'un StripeProvider
+// -------------------------------------------------------
+function PiedPageStripe({ offre, navigation }) {
+  const { initPaymentSheet, presentPaymentSheet } = useStripeHook();
+  const [enCours, setEnCours] = useState(false);
+
+  const handlePayer = async () => {
+    setEnCours(true);
+    try {
+      const intent = await creerIntentPaiement(offre.id);
+
+      const { error: initError } = await initPaymentSheet({
+        paymentIntentClientSecret: intent.clientSecret,
+        merchantDisplayName: 'Take & Care',
+        style: 'alwaysLight',
+      });
+      if (initError) throw new Error(initError.message);
+
+      const { error: payError } = await presentPaymentSheet();
+      if (payError) {
+        if (payError.code !== 'Canceled') Alert.alert('Paiement refusé', payError.message);
+        return;
+      }
+
+      const resultat = await creerReservation(offre.id, intent.paymentIntentId);
+      Alert.alert(
+        '🎉 Réservation confirmée !',
+        `Numéro : ${resultat.reservation.numero}\n\nPasse à la pharmacie entre ${resultat.reservation.heureRetrait} avec ton numéro de réservation.`,
+        [{ text: 'Super !', onPress: () => navigation.goBack() }]
+      );
+    } catch (err) {
+      Alert.alert('Erreur', err?.response?.data?.erreur || 'La réservation a échoué. Réessaie.');
+    } finally {
+      setEnCours(false);
+    }
+  };
+
+  return (
+    <View style={styles.piedPage}>
+      <LignePrix offre={offre} />
+      <TouchableOpacity
+        style={[styles.boutonReserver, enCours && styles.boutonDesactive]}
+        onPress={handlePayer}
+        disabled={enCours}
+      >
+        {enCours
+          ? <ActivityIndicator color={COLORS.blanc} />
+          : <Text style={styles.texteBouton}>Payer {offre.prixReduit.toFixed(2)} €</Text>
+        }
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// -------------------------------------------------------
+// PiedPageSimple — aucune dépendance Stripe, fonctionne dans Expo Go
+// -------------------------------------------------------
+function PiedPageSimple({ offre, navigation }) {
+  const [enCours, setEnCours] = useState(false);
+
+  const handleReserver = () => {
+    Alert.alert(
+      'Confirmer la réservation',
+      `Tu vas réserver "${offre.titre}" pour ${offre.prixReduit?.toFixed(2) ?? '0.00'}€.\n\nRetrait : ${offre.heureRetrait}`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Réserver !',
+          onPress: async () => {
+            setEnCours(true);
+            try {
+              const resultat = await creerReservation(offre.id);
+              Alert.alert(
+                '🎉 Réservation confirmée !',
+                `Numéro : ${resultat.reservation.numero}\n\nPasse à la pharmacie entre ${resultat.reservation.heureRetrait} avec ton numéro de réservation.`,
+                [{ text: 'Super !', onPress: () => navigation.goBack() }]
+              );
+            } catch {
+              Alert.alert('Erreur', 'La réservation a échoué. Réessaie.');
+            } finally {
+              setEnCours(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  return (
+    <View style={styles.piedPage}>
+      <LignePrix offre={offre} />
+      <TouchableOpacity
+        style={[styles.boutonReserver, enCours && styles.boutonDesactive]}
+        onPress={handleReserver}
+        disabled={enCours}
+      >
+        {enCours
+          ? <ActivityIndicator color={COLORS.blanc} />
+          : <Text style={styles.texteBouton}>Je réserve ce panier</Text>
+        }
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function LignePrix({ offre }) {
+  return (
+    <View style={styles.lignePresentation}>
+      <View>
+        <Text style={styles.labelPrix}>Prix total</Text>
+        <Text style={styles.prixOriginal}>{offre.prixOriginal.toFixed(2)}€</Text>
       </View>
-
+      <Text style={styles.prixReduit}>{offre.prixReduit.toFixed(2)}€</Text>
     </View>
   );
 }
