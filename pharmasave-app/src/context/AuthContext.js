@@ -15,7 +15,8 @@ import { connexion, demanderVerification, confirmerInscription, getMonProfil, sa
 // Configure l'affichage des notifications quand l'app est au premier plan
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList:   true,
     shouldPlaySound: true,
     shouldSetBadge:  false,
   }),
@@ -25,8 +26,13 @@ async function enregistrerPushToken() {
   const { status } = await Notifications.requestPermissionsAsync();
   if (status !== 'granted') return null;
 
-  const tokenData = await Notifications.getExpoPushTokenAsync();
-  return tokenData.data;
+  try {
+    const tokenData = await Notifications.getExpoPushTokenAsync();
+    return tokenData.data;
+  } catch {
+    // Sans projectId EAS (ex : Expo Go), pas de token push — l'app continue sans
+    return null;
+  }
 }
 
 // Crée le contexte (accessible depuis n'importe quel écran)

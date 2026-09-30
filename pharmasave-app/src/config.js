@@ -13,7 +13,7 @@
 // ============================================================
 
 export const CONFIG = {
-  API_URL: 'https://invigorating-recreation-production-2e16.up.railway.app/api',
+  API_URL: 'http://172.20.10.3:3000/api',
   RAYON_RECHERCHE: 5,
   // Clé publique Stripe (commence par pk_test_ ou pk_live_)
   // Récupère-la sur https://dashboard.stripe.com/apikeys
