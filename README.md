@@ -9,7 +9,7 @@
 
 
 <p align="center">
-  <img src="docs/screenshots/accueil.png" width="200" alt="Écran d'accueil">
+  <img src="desktop/h/login-register.png" width="200" alt="Écran d'accueil">
   <img src="docs/screenshots/carte.png" width="200" alt="Carte des pharmacies">
   <img src="docs/screenshots/reservation.png" width="200" alt="Réservation">
   <img src="docs/screenshots/dashboard.png" width="200" alt="Tableau de bord pharmacie">
