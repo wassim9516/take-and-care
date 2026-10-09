@@ -89,7 +89,6 @@ Ce projet fait l'objet d'un **audit de sécurité** mené selon l'OWASP MASVS et
 - Concevoir une application mobile complète avec deux parcours utilisateurs distincts
 - Structurer la gestion d'état d'une application React Native avec Zustand
 - Valider un besoin auprès de vrais utilisateurs avant de développer
-- [À compléter avec tes propres apprentissages]
 
 
 
