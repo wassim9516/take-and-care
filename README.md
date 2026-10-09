@@ -11,7 +11,7 @@
 <p align="center">
   <img src="screenshot/h/login-register.PNG" width="200" alt="Écran d'accueil">
   <img src="screenshot/h/map.PNG" width="200" alt="Carte des pharmacies">
-  <img src="screenshot/h/home.PNG" width="200" alt="Réservation">
+  <img src="screenshot/h/home-page.PNG" width="200" alt="Réservation">
   <img src="screenshot/h/setting-user.PNG" width="200" alt="Tableau de bord pharmacie">
 </p>
 
