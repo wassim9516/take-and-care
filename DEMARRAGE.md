@@ -31,6 +31,7 @@ Ouvre **deux terminaux** côte à côte.
 ```bash
 cd ~/Desktop/tkF/pharmasave-backend
 npm install
+cp .env.example .env   # puis remplis les valeurs (DB_USER, JWT_SECRET…)
 ```
 
 **Terminal 2 — App mobile :**

@@ -7,8 +7,19 @@
 
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const sequelize = require('./connection');
 const { Pharmacie, Offre, Utilisateur } = require('./models');
+
+// Ce script efface toute la base : interdit en production
+if (process.env.NODE_ENV === 'production') {
+  console.error('❌ seed.js efface toutes les données — interdit avec NODE_ENV=production.');
+  process.exit(1);
+}
+
+// Mot de passe des comptes pharmaciens de test : SEED_PASSWORD du .env,
+// sinon un mot de passe aléatoire affiché à la fin
+const motDePasseSeed = process.env.SEED_PASSWORD || crypto.randomBytes(9).toString('base64url');
 
 async function seed() {
   try {
@@ -376,7 +387,7 @@ async function seed() {
     ]);
 
     // --- Comptes pharmaciens (un par pharmacie) ---
-    const hash = await bcrypt.hash('pharma123', 10);
+    const hash = await bcrypt.hash(motDePasseSeed, 10);
     await Utilisateur.bulkCreate([
       {
         prenom: 'Sophie',
@@ -495,7 +506,7 @@ async function seed() {
     console.log('');
     console.log('✅ Base de données remplie avec succès !');
     console.log('');
-    console.log('Comptes pharmaciens créés (mot de passe : pharma123) :');
+    console.log(`Comptes pharmaciens créés (mot de passe : ${motDePasseSeed}) :`);
     console.log('  → pharmacie.marche@takeandcare.fr      (Pharmacie du Marché)');
     console.log('  → grande.pharmacie@takeandcare.fr      (Grande Pharmacie Centrale)');
     console.log('  → pharmacie.bienetre@takeandcare.fr    (Pharmacie Bien-Être)');

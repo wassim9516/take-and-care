@@ -19,6 +19,20 @@ function supprimerFichierImage(imageUrl) {
   fs.unlink(cheminFichier, () => {});
 }
 
+// Champs qu'un pharmacien peut définir sur une offre.
+// id et pharmacieId sont exclus : ils ne doivent jamais venir du client.
+const CHAMPS_OFFRE = [
+  'titre', 'description', 'produits', 'prixOriginal', 'prixReduit',
+  'quantiteDisponible', 'datePeremption', 'categorie', 'image',
+  'heureRetrait', 'actif',
+];
+
+function champsAutorises(body) {
+  return Object.fromEntries(
+    CHAMPS_OFFRE.filter(c => body[c] !== undefined).map(c => [c, body[c]])
+  );
+}
+
 // GET /api/offers — Offres actives, paginées
 router.get('/', async (req, res) => {
   try {
@@ -120,7 +134,7 @@ router.post('/', authMiddleware, async (req, res) => {
 
   try {
     const pharmacie = await Pharmacie.findByPk(pharmacieId);
-    const offre = await Offre.create({ ...req.body, pharmacieId });
+    const offre = await Offre.create({ ...champsAutorises(req.body), pharmacieId });
 
     // Notifie tous les utilisateurs ayant un push token
     const utilisateurs = await Utilisateur.findAll({
@@ -156,7 +170,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
     }
 
     const ancienneImage = offre.image;
-    await offre.update(req.body);
+    await offre.update(champsAutorises(req.body));
     if (req.body.image && ancienneImage && req.body.image !== ancienneImage) {
       supprimerFichierImage(ancienneImage);
     }
