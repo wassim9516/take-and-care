@@ -10,9 +10,9 @@
 
 <p align="center">
   <img src="home-page.PNG" width="200" alt="Écran d'accueil">
-  <img src="docs/screenshots/carte.png" width="200" alt="Carte des pharmacies">
-  <img src="docs/screenshots/reservation.png" width="200" alt="Réservation">
-  <img src="docs/screenshots/dashboard.png" width="200" alt="Tableau de bord pharmacie">
+  <img src="map.PNG" width="200" alt="Carte des pharmacies">
+  <img src="login-register.PNG" width="200" alt="Réservation">
+  <img src="setting-user.PNG" width="200" alt="Tableau de bord pharmacie">
 </p>
 
 ## Le problème
