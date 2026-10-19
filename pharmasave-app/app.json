@@ -11,13 +11,13 @@
     ],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.tonnom.pharmasave"
+      "bundleIdentifier": "fr.takeandcare.app"
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#2ECC71"
       },
-      "package": "com.tonnom.pharmasave"
+      "package": "fr.takeandcare.app"
     },
     "plugins": [
       [
@@ -29,7 +29,7 @@
       [
         "@stripe/stripe-react-native",
         {
-          "merchantIdentifier": "merchant.com.tonnom.pharmasave",
+          "merchantIdentifier": "merchant.fr.takeandcare.app",
           "enableGooglePay": false
         }
       ],
