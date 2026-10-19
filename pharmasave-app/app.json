@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "PharmaSave",
+    "slug": "pharmasave",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.tonnom.pharmasave"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#2ECC71"
+      },
+      "package": "com.tonnom.pharmasave"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "PharmaSave a besoin de ta position pour trouver les pharmacies près de toi."
+        }
+      ],
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.com.tonnom.pharmasave",
+          "enableGooglePay": false
+        }
+      ],
+      "expo-font",
+      "expo-status-bar",
+      "expo-secure-store"
+    ]
+  }
+}

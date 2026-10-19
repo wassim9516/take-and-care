@@ -1,0 +1,42 @@
+// ============================================================
+// database/connection.js — Connexion à PostgreSQL via Sequelize
+// ============================================================
+// En production (Railway) : utilise DATABASE_URL
+// En développement local  : utilise les variables DB_* du .env
+
+const { Sequelize } = require('sequelize');
+require('dotenv').config();
+
+let sequelize;
+
+if (process.env.DATABASE_URL) {
+  // Mode Railway / production
+  const isInternalUrl = process.env.DATABASE_URL.includes('.railway.internal');
+  sequelize = new Sequelize(process.env.DATABASE_URL, {
+    dialect: 'postgres',
+    logging: false,
+    // Réseau privé Railway : pas de SSL. Sinon SSL obligatoire ; le certificat
+    // du serveur n'est vérifié que si DB_SSL_CA contient le certificat de l'autorité
+    // (le proxy public Railway utilise un certificat auto-signé).
+    dialectOptions: isInternalUrl ? {} : {
+      ssl: process.env.DB_SSL_CA
+        ? { require: true, rejectUnauthorized: true, ca: process.env.DB_SSL_CA.replace(/\\n/g, '\n') }
+        : { require: true, rejectUnauthorized: false },
+    },
+  });
+} else {
+  // Mode développement local
+  sequelize = new Sequelize(
+    process.env.DB_NAME,
+    process.env.DB_USER,
+    process.env.DB_PASSWORD,
+    {
+      host:    process.env.DB_HOST,
+      port:    process.env.DB_PORT || 5432,
+      dialect: 'postgres',
+      logging: false,
+    }
+  );
+}
+
+module.exports = sequelize;
