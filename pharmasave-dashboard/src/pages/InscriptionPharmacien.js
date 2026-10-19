@@ -3,6 +3,7 @@
 // ============================================================
 
 import React, { useState } from 'react';
+import { Leaf, Check, MapPin, Crosshair, ArrowRight, ArrowLeft, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const VERT    = '#2D6A4F';
@@ -119,7 +120,7 @@ export default function InscriptionPharmacien({ onRetourConnexion }) {
 
         {/* En-tête */}
         <div style={s.entete}>
-          <span style={s.logo}>🍀</span>
+          <span style={s.logo}><Leaf size={40} strokeWidth={1.75} color="#2D6A4F" /></span>
           <h1 style={s.titre}>Rejoindre Take & Care</h1>
           <p style={s.sousTitre}>Créez votre espace pharmacien</p>
         </div>
@@ -129,7 +130,7 @@ export default function InscriptionPharmacien({ onRetourConnexion }) {
           {[1, 2].map(n => (
             <div key={n} style={s.etapeConteneur}>
               <div style={{ ...s.etapeCercle, ...(etape >= n ? s.etapeActive : {}) }}>
-                {etape > n ? '✓' : n}
+                {etape > n ? <Check size={15} strokeWidth={3} /> : n}
               </div>
               <span style={{ ...s.etapeLabel, ...(etape >= n ? { color: VERT } : {}) }}>
                 {n === 1 ? 'Mon compte' : 'Ma pharmacie'}
@@ -153,7 +154,7 @@ export default function InscriptionPharmacien({ onRetourConnexion }) {
             {erreur && <div style={s.erreur}>{erreur}</div>}
 
             <button style={s.boutonPrimaire} onClick={validerEtape1}>
-              Continuer →
+              Continuer <ArrowRight size={16} style={{ verticalAlign: '-3px' }} />
             </button>
           </div>
         )}
@@ -169,9 +170,9 @@ export default function InscriptionPharmacien({ onRetourConnexion }) {
             {/* Géolocalisation */}
             <div style={s.blocGeo}>
               <div style={s.ligneGeo}>
-                <span style={s.labelGeo}>📍 Coordonnées GPS</span>
+                <span style={{ ...s.labelGeo, display: 'inline-flex', alignItems: 'center', gap: 6 }}><MapPin size={15} /> Coordonnées GPS</span>
                 <button type="button" style={s.boutonGeo} onClick={geoLocaliser} disabled={geoChargement}>
-                  {geoChargement ? 'Localisation...' : '🎯 Ma position actuelle'}
+                  {geoChargement ? <><Loader2 size={14} className="tc-tourne" style={{ verticalAlign: '-2px' }} /> Localisation…</> : <><Crosshair size={14} style={{ verticalAlign: '-2px' }} /> Ma position actuelle</>}
                 </button>
               </div>
               <div style={s.ligneChamps}>
@@ -187,10 +188,10 @@ export default function InscriptionPharmacien({ onRetourConnexion }) {
 
             <div style={s.ligneBoutons}>
               <button type="button" style={s.boutonSecondaire} onClick={() => { setEtape(1); setErreur(''); }}>
-                ← Retour
+                <ArrowLeft size={15} style={{ verticalAlign: '-3px' }} /> Retour
               </button>
               <button type="submit" style={s.boutonPrimaire} disabled={chargement}>
-                {chargement ? 'Création du compte...' : '✅ Créer mon espace'}
+                {chargement ? 'Création du compte…' : <><Check size={16} style={{ verticalAlign: '-3px' }} /> Créer mon espace</>}
               </button>
             </div>
           </form>

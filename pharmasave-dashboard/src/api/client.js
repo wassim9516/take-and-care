@@ -116,6 +116,17 @@ export const modifierMotDePasse = async (ancienMotDePasse, nouveauMotDePasse) =>
   return response.data;
 };
 
+export const modifierProfil = async (data) => {
+  const response = await api.put('/auth/profil', data);
+  return response.data; // { message, utilisateur }
+};
+
+export const deconnecterPartout = async () => {
+  const response = await api.post('/auth/deconnexion-partout');
+  if (response.data.token) localStorage.setItem('token_pharmacien', response.data.token);
+  return response.data;
+};
+
 export const uploadImage = async (fichier) => {
   const formData = new FormData();
   formData.append('image', fichier);

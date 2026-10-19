@@ -204,6 +204,21 @@ router.put('/mot-de-passe', limiteAuth, authMiddleware, async (req, res) => {
 });
 
 // -------------------------------------------------------
+// POST /api/auth/deconnexion-partout
+// Invalide tous les tokens (autres appareils, navigateurs oubliés…)
+// et renvoie un nouveau token pour la session courante.
+// -------------------------------------------------------
+router.post('/deconnexion-partout', authMiddleware, async (req, res) => {
+  try {
+    const utilisateur = await Utilisateur.findByPk(req.utilisateur.id);
+    await utilisateur.update({ tokenVersion: utilisateur.tokenVersion + 1 });
+    res.json({ message: 'Toutes les autres sessions ont été déconnectées.', token: genererToken(utilisateur) });
+  } catch (err) {
+    res.status(500).json({ erreur: 'Erreur serveur.' });
+  }
+});
+
+// -------------------------------------------------------
 // PUT /api/auth/push-token
 // Sauvegarde le token Expo push de l'utilisateur connecté
 // Body : { pushToken }

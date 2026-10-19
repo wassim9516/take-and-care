@@ -52,6 +52,15 @@ export function AuthProvider({ children }) {
     setPharmacien(resp.utilisateur);
   };
 
+  // Après une modification du profil dans les réglages
+  const mettreAJourPharmacien = (donnees) => {
+    setPharmacien(p => {
+      const maj = { ...p, ...donnees };
+      localStorage.setItem('pharmacien_data', JSON.stringify(maj));
+      return maj;
+    });
+  };
+
   const seDeconnecter = () => {
     localStorage.removeItem('token_pharmacien');
     localStorage.removeItem('pharmacien_data');
@@ -59,7 +68,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ pharmacien, chargement, seConnecter, seDeconnecter, sInscrirePharmacien, estConnecte: !!pharmacien }}>
+    <AuthContext.Provider value={{ pharmacien, chargement, seConnecter, seDeconnecter, sInscrirePharmacien, mettreAJourPharmacien, estConnecte: !!pharmacien }}>
       {children}
     </AuthContext.Provider>
   );

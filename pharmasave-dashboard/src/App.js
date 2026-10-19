@@ -4,6 +4,8 @@
 
 import React, { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { RetoursProvider } from './components/ui';
+import { Leaf } from 'lucide-react';
 import Login                  from './pages/Login';
 import Dashboard              from './pages/Dashboard';
 import InscriptionPharmacien  from './pages/InscriptionPharmacien';
@@ -14,8 +16,8 @@ function Routeur() {
 
   if (chargement) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#FAF7F0' }}>
-        <span style={{ fontSize: 48 }}>🍀</span>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Leaf className="tc-apparait" size={44} strokeWidth={1.75} color="#2D6A4F" />
       </div>
     );
   }
@@ -32,7 +34,9 @@ function Routeur() {
 export default function App() {
   return (
     <AuthProvider>
-      <Routeur />
+      <RetoursProvider>
+        <Routeur />
+      </RetoursProvider>
     </AuthProvider>
   );
 }

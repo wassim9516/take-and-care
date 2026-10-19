@@ -1,20 +1,24 @@
 // ============================================================
 // src/components/FormulaireOffre.js — Créer / Modifier une offre
 // ============================================================
+// S'affiche dans un panneau latéral, avec aperçu de la remise
+// et dépôt de photo par glisser-déposer.
+// ============================================================
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { creerOffre, modifierOffre, uploadImage } from '../api/client';
-
-const VERT    = '#2D6A4F';
-const BORDURE = '#EDE8DF';
+import { Camera, ImagePlus, X, AlertTriangle, Loader2 } from 'lucide-react';
+import { formaterEuros } from './ui';
 
 const CATEGORIES = [
-  { id: 'soin_visage', label: 'Soin Visage' },
-  { id: 'soin_corps',  label: 'Soin Corps' },
+  { id: 'soin_visage', label: 'Soin visage' },
+  { id: 'soin_corps',  label: 'Soin corps' },
   { id: 'complement',  label: 'Compléments' },
   { id: 'bebe',        label: 'Bébé' },
   { id: 'solaire',     label: 'Solaire' },
 ];
+
+const FORMATS_IMAGE = ['image/jpeg', 'image/png', 'image/webp'];
 
 export default function FormulaireOffre({ pharmacieId, offre, onTermine, onAnnuler }) {
   const estModification = !!offre;
@@ -23,20 +27,54 @@ export default function FormulaireOffre({ pharmacieId, offre, onTermine, onAnnul
   const [titre, setTitre]                   = useState(offre?.titre || '');
   const [description, setDescription]       = useState(offre?.description || '');
   const [produits, setProduits]             = useState(offre?.produits?.join('\n') || '');
-  const [prixOriginal, setPrixOriginal]     = useState(offre?.prixOriginal || '');
-  const [prixReduit, setPrixReduit]         = useState(offre?.prixReduit || '');
-  const [quantite, setQuantite]             = useState(offre?.quantiteDisponible || 1);
+  const [prixOriginal, setPrixOriginal]     = useState(offre?.prixOriginal ?? '');
+  const [prixReduit, setPrixReduit]         = useState(offre?.prixReduit ?? '');
+  const [quantite, setQuantite]             = useState(offre?.quantiteDisponible ?? 1);
   const [datePeremption, setDatePeremption] = useState(offre?.datePeremption || '');
   const [categorie, setCategorie]           = useState(offre?.categorie || 'soin_visage');
   const [heureRetrait, setHeureRetrait]     = useState(offre?.heureRetrait || '');
   const [imageFichier, setImageFichier]     = useState(null);
   const [imagePreview, setImagePreview]     = useState(offre?.image || '');
+  const [survolDepot, setSurvolDepot]       = useState(false);
   const [chargement, setChargement]         = useState(false);
   const [erreur, setErreur]                 = useState('');
+
+  // Échap ferme le panneau
+  useEffect(() => {
+    const surTouche = (e) => { if (e.key === 'Escape' && !chargement) onAnnuler(); };
+    window.addEventListener('keydown', surTouche);
+    return () => window.removeEventListener('keydown', surTouche);
+  }, [chargement, onAnnuler]);
+
+  const choisirImage = (fichier) => {
+    if (!fichier) return;
+    if (!FORMATS_IMAGE.includes(fichier.type)) {
+      setErreur('Format non supporté : utilise une image JPG, PNG ou WEBP.');
+      return;
+    }
+    if (fichier.size > 5 * 1024 * 1024) {
+      setErreur('Image trop lourde (5 Mo maximum).');
+      return;
+    }
+    setErreur('');
+    setImageFichier(fichier);
+    setImagePreview(URL.createObjectURL(fichier));
+  };
+
+  const pOrig = parseFloat(prixOriginal);
+  const pRed  = parseFloat(prixReduit);
+  const prixValides = pOrig > 0 && pRed > 0;
+  const remise = prixValides ? Math.round((1 - pRed / pOrig) * 100) : null;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErreur('');
+
+    if (prixValides && pRed > pOrig) {
+      setErreur('Le prix réduit ne peut pas être supérieur au prix original.');
+      return;
+    }
+
     setChargement(true);
 
     // Convertit le texte multi-lignes en tableau de produits
@@ -46,21 +84,22 @@ export default function FormulaireOffre({ pharmacieId, offre, onTermine, onAnnul
     if (imageFichier) {
       try {
         imageUrl = await uploadImage(imageFichier);
-      } catch {
-        setErreur("Échec de l'upload de l'image. Vérifie le serveur et réessaie.");
+      } catch (err) {
+        setErreur(err.response?.data?.erreur || "Échec de l'envoi de l'image. Vérifie le serveur et réessaie.");
         setChargement(false);
         return;
       }
     }
 
+    const q = parseInt(quantite, 10);
     const data = {
       pharmacieId,
       titre,
       description,
       produits: produitsArray,
-      prixOriginal:       parseFloat(prixOriginal),
-      prixReduit:         parseFloat(prixReduit),
-      quantiteDisponible: parseInt(quantite) || 1,
+      prixOriginal:       pOrig,
+      prixReduit:         pRed,
+      quantiteDisponible: Number.isNaN(q) ? 1 : q,
       datePeremption,
       categorie,
       heureRetrait,
@@ -82,219 +121,123 @@ export default function FormulaireOffre({ pharmacieId, offre, onTermine, onAnnul
   };
 
   return (
-    <div style={styles.conteneur}>
-      <div style={styles.entete}>
-        <h3 style={styles.titre}>
-          {estModification ? 'Modifier l\'offre' : 'Nouvelle offre'}
-        </h3>
-        <button onClick={onAnnuler} style={styles.boutonFermer}>✕</button>
-      </div>
-
-      <form onSubmit={handleSubmit} style={styles.formulaire}>
-
-        {/* Ligne 1 : titre + catégorie */}
-        <div style={styles.ligne}>
-          <div style={styles.groupe}>
-            <label style={styles.label}>Titre du panier *</label>
-            <input style={styles.input} value={titre} onChange={e => setTitre(e.target.value)} placeholder="ex: Panier Soin Visage" required />
+    <>
+      <div className="tc-panneau-overlay" onClick={() => !chargement && onAnnuler()} />
+      <aside className="tc-panneau" role="dialog" aria-modal="true" aria-label={estModification ? 'Modifier l\'offre' : 'Nouvelle offre'}>
+        <div className="tc-panneau-entete">
+          <div>
+            <h2 className="tc-modale-titre">{estModification ? 'Modifier l\'offre' : 'Nouvelle offre'}</h2>
+            <p className="tc-carte-sous-titre">
+              {estModification ? 'Les changements sont visibles immédiatement dans l\'app.' : 'Les clients à proximité seront notifiés.'}
+            </p>
           </div>
-          <div style={styles.groupe}>
-            <label style={styles.label}>Catégorie *</label>
-            <select style={styles.input} value={categorie} onChange={e => setCategorie(e.target.value)}>
+          <button className="tc-fermer" onClick={onAnnuler} disabled={chargement} aria-label="Fermer"><X size={16} /></button>
+        </div>
+
+        <form id="formulaire-offre" onSubmit={handleSubmit} className="tc-panneau-corps tc-formulaire">
+
+          {/* Photo */}
+          <label
+            className={`tc-depot ${survolDepot ? 'survol' : ''}`}
+            onDragOver={e => { e.preventDefault(); setSurvolDepot(true); }}
+            onDragLeave={() => setSurvolDepot(false)}
+            onDrop={e => { e.preventDefault(); setSurvolDepot(false); choisirImage(e.dataTransfer.files[0]); }}
+          >
+            <input type="file" accept={FORMATS_IMAGE.join(',')} onChange={e => choisirImage(e.target.files[0])} />
+            {imagePreview ? (
+              <>
+                <img src={imagePreview} alt="Aperçu du panier" />
+                <span className="tc-depot-changer"><Camera size={13} /> Changer la photo</span>
+              </>
+            ) : (
+              <>
+                <ImagePlus size={30} strokeWidth={1.6} style={{ color: 'var(--vert-700)' }} />
+                <strong style={{ color: 'var(--encre)' }}>Ajoute une photo du panier</strong>
+                <span>Glisse une image ici ou clique · JPG, PNG, WEBP · 5 Mo max</span>
+              </>
+            )}
+          </label>
+
+          <div className="tc-groupe">
+            <label className="tc-label" htmlFor="o-titre">Titre du panier *</label>
+            <input id="o-titre" className="tc-champ" value={titre} onChange={e => setTitre(e.target.value)} placeholder="ex : Panier Soin Visage" maxLength={100} required />
+          </div>
+
+          <div className="tc-groupe">
+            <label className="tc-label" htmlFor="o-cat">Catégorie *</label>
+            <select id="o-cat" className="tc-champ" value={categorie} onChange={e => setCategorie(e.target.value)}>
               {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
           </div>
-        </div>
 
-        {/* Description */}
-        <div style={styles.groupe}>
-          <label style={styles.label}>Description</label>
-          <textarea style={{ ...styles.input, minHeight: 80, resize: 'vertical' }} value={description} onChange={e => setDescription(e.target.value)} placeholder="Décris le contenu du panier..." />
-        </div>
+          <div className="tc-groupe">
+            <label className="tc-label" htmlFor="o-desc">Description</label>
+            <textarea id="o-desc" className="tc-champ" value={description} onChange={e => setDescription(e.target.value)} placeholder="Décris le contenu du panier…" maxLength={2000} />
+          </div>
 
-        {/* Produits */}
-        <div style={styles.groupe}>
-          <label style={styles.label}>Produits (un par ligne) *</label>
-          <textarea
-            style={{ ...styles.input, minHeight: 100, resize: 'vertical', fontFamily: 'monospace' }}
-            value={produits}
-            onChange={e => setProduits(e.target.value)}
-            placeholder={'Crème hydratante Vichy 50ml\nSérum anti-âge Avène 30ml'}
-            required
-          />
-        </div>
-
-        {/* Ligne 2 : prix */}
-        <div style={styles.ligne}>
-          <div style={styles.groupe}>
-            <label style={styles.label}>Prix original (€) *</label>
-            <input style={styles.input} type="number" step="0.01" min="0" value={prixOriginal} onChange={e => setPrixOriginal(e.target.value)} placeholder="45.00" required />
-          </div>
-          <div style={styles.groupe}>
-            <label style={styles.label}>Prix réduit (€) *</label>
-            <input style={styles.input} type="number" step="0.01" min="0" value={prixReduit} onChange={e => setPrixReduit(e.target.value)} placeholder="15.00" required />
-          </div>
-          <div style={styles.groupe}>
-            <label style={styles.label}>Quantité *</label>
-            <input style={styles.input} type="number" min="1" value={quantite} onChange={e => setQuantite(e.target.value)} required />
-          </div>
-        </div>
-
-        {/* Ligne 3 : date + heure */}
-        <div style={styles.ligne}>
-          <div style={styles.groupe}>
-            <label style={styles.label}>Date de péremption</label>
-            <input style={styles.input} type="date" value={datePeremption} onChange={e => setDatePeremption(e.target.value)} />
-          </div>
-          <div style={styles.groupe}>
-            <label style={styles.label}>Heure de retrait</label>
-            <input style={styles.input} value={heureRetrait} onChange={e => setHeureRetrait(e.target.value)} placeholder="ex: 17h00 - 19h30" />
-          </div>
-        </div>
-
-        {/* Image */}
-        <div style={styles.groupe}>
-          <label style={styles.label}>Photo du panier</label>
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            style={styles.inputFichier}
-            onChange={e => {
-              const f = e.target.files[0];
-              if (f) {
-                setImageFichier(f);
-                setImagePreview(URL.createObjectURL(f));
-              }
-            }}
-          />
-          {imagePreview && (
-            <img
-              src={imagePreview}
-              alt="Aperçu"
-              style={styles.apercu}
+          <div className="tc-groupe">
+            <label className="tc-label" htmlFor="o-prod">Produits * <span className="aide">· un par ligne</span></label>
+            <textarea
+              id="o-prod"
+              className="tc-champ"
+              value={produits}
+              onChange={e => setProduits(e.target.value)}
+              placeholder={'Crème hydratante Vichy 50 ml\nSérum anti-âge Avène 30 ml'}
+              required
             />
+          </div>
+
+          <div className="tc-ligne">
+            <div className="tc-groupe">
+              <label className="tc-label" htmlFor="o-po">Prix original (€) *</label>
+              <input id="o-po" className="tc-champ" type="number" step="0.01" min="0.5" value={prixOriginal} onChange={e => setPrixOriginal(e.target.value)} placeholder="45,00" required />
+            </div>
+            <div className="tc-groupe">
+              <label className="tc-label" htmlFor="o-pr">Prix réduit (€) *</label>
+              <input id="o-pr" className="tc-champ" type="number" step="0.01" min="0.5" value={prixReduit} onChange={e => setPrixReduit(e.target.value)} placeholder="15,00" required />
+            </div>
+            <div className="tc-groupe">
+              <label className="tc-label" htmlFor="o-q">Quantité *</label>
+              <input id="o-q" className="tc-champ" type="number" min={estModification ? 0 : 1} max="1000" value={quantite} onChange={e => setQuantite(e.target.value)} required />
+            </div>
+          </div>
+
+          {prixValides && (
+            <div className="tc-apercu-prix tc-apparait">
+              <div>
+                <div style={{ fontSize: 12.5, color: 'var(--encre-2)' }}>Le client paie</div>
+                <div className="gros">
+                  {formaterEuros(pRed)}
+                  {pOrig > pRed && <s style={{ fontSize: 14, fontWeight: 500, color: 'var(--encre-3)', marginLeft: 8 }}>{formaterEuros(pOrig)}</s>}
+                </div>
+              </div>
+              {remise > 0
+                ? <span className="badge">−{remise} %</span>
+                : remise < 0 && <span style={{ color: 'var(--texte-annule)', fontSize: 13, fontWeight: 700, display: 'inline-flex', gap: 6, alignItems: 'center' }}><AlertTriangle size={15} /> Prix réduit supérieur au prix original</span>}
+            </div>
           )}
-        </div>
 
-        {erreur && <p style={styles.erreur}>{erreur}</p>}
+          <div className="tc-ligne">
+            <div className="tc-groupe">
+              <label className="tc-label" htmlFor="o-date">Date de péremption</label>
+              <input id="o-date" className="tc-champ" type="date" value={datePeremption || ''} onChange={e => setDatePeremption(e.target.value)} />
+            </div>
+            <div className="tc-groupe">
+              <label className="tc-label" htmlFor="o-heure">Créneau de retrait</label>
+              <input id="o-heure" className="tc-champ" value={heureRetrait} onChange={e => setHeureRetrait(e.target.value)} placeholder="ex : 17h00 - 19h30" maxLength={100} />
+            </div>
+          </div>
 
-        {/* Boutons */}
-        <div style={styles.boutons}>
-          <button type="button" onClick={onAnnuler} style={styles.boutonAnnuler}>Annuler</button>
-          <button type="submit" style={styles.boutonSauvegarder} disabled={chargement}>
-            {chargement ? 'Sauvegarde...' : estModification ? 'Modifier' : 'Créer l\'offre'}
+          {erreur && <div className="tc-alerte erreur"><AlertTriangle size={16} /> {erreur}</div>}
+        </form>
+
+        <div className="tc-panneau-pied">
+          <button type="button" onClick={onAnnuler} className="tc-btn tc-btn-secondaire" disabled={chargement}>Annuler</button>
+          <button type="submit" form="formulaire-offre" className="tc-btn tc-btn-primaire" disabled={chargement}>
+            {chargement ? <><Loader2 size={16} className="tc-tourne" /> Enregistrement…</> : estModification ? 'Enregistrer' : 'Publier l\'offre'}
           </button>
         </div>
-
-      </form>
-    </div>
+      </aside>
+    </>
   );
 }
-
-const styles = {
-  conteneur: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    border: `1px solid ${BORDURE}`,
-    marginBottom: 24,
-    overflow: 'hidden',
-  },
-  entete: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '16px 20px',
-    borderBottom: `1px solid ${BORDURE}`,
-    backgroundColor: '#FAF7F0',
-  },
-  titre: {
-    margin: 0,
-    fontSize: 16,
-    fontWeight: 700,
-    color: VERT,
-  },
-  boutonFermer: {
-    background: 'none',
-    border: 'none',
-    fontSize: 18,
-    cursor: 'pointer',
-    color: '#6B7C6B',
-  },
-  formulaire: {
-    padding: 20,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 16,
-  },
-  ligne: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-    gap: 16,
-  },
-  groupe: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 6,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: VERT,
-  },
-  input: {
-    padding: '10px 12px',
-    borderRadius: 8,
-    border: `1px solid ${BORDURE}`,
-    fontSize: 14,
-    backgroundColor: '#FAF7F0',
-    outline: 'none',
-    width: '100%',
-    boxSizing: 'border-box',
-  },
-  inputFichier: {
-    padding: '8px 0',
-    fontSize: 14,
-    color: '#1A2E1A',
-  },
-  apercu: {
-    marginTop: 10,
-    width: '100%',
-    maxHeight: 200,
-    objectFit: 'cover',
-    borderRadius: 8,
-    border: `1px solid ${BORDURE}`,
-  },
-  erreur: {
-    color: '#C0392B',
-    fontSize: 13,
-    padding: '10px 14px',
-    backgroundColor: '#fdf0ef',
-    borderRadius: 8,
-    margin: 0,
-  },
-  boutons: {
-    display: 'flex',
-    justifyContent: 'flex-end',
-    gap: 12,
-    paddingTop: 8,
-  },
-  boutonAnnuler: {
-    background: 'none',
-    border: `1px solid ${BORDURE}`,
-    borderRadius: 8,
-    padding: '10px 20px',
-    cursor: 'pointer',
-    fontSize: 14,
-    color: '#6B7C6B',
-  },
-  boutonSauvegarder: {
-    backgroundColor: VERT,
-    color: '#fff',
-    border: 'none',
-    borderRadius: 8,
-    padding: '10px 24px',
-    fontSize: 14,
-    fontWeight: 700,
-    cursor: 'pointer',
-  },
-};
