@@ -45,7 +45,7 @@ export default function MapScreen({ navigation }) {
       if (status !== 'granted') {
         Alert.alert(
           'Permission refusée',
-          'PharmaSave a besoin de ta position pour trouver les pharmacies proches.',
+          'Take & Care a besoin de ta position pour trouver les pharmacies proches.',
           [{ text: 'OK' }]
         );
         setChargement(false);

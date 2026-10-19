@@ -1,7 +1,7 @@
 {
   "name": "pharmasave-backend",
   "version": "1.0.0",
-  "description": "Serveur API pour l'application PharmaSave",
+  "description": "Serveur API pour l'application Take & Care",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

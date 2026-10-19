@@ -1,5 +1,5 @@
 // ============================================================
-// server.js — Point d'entrée du serveur PharmaSave
+// server.js — Point d'entrée du serveur Take & Care
 // ============================================================
 
 require('dotenv').config();

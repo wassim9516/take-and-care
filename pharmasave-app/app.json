@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "PharmaSave",
+    "name": "Take & Care",
     "slug": "pharmasave",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -23,7 +23,7 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "PharmaSave a besoin de ta position pour trouver les pharmacies près de toi."
+          "locationAlwaysAndWhenInUsePermission": "Take & Care a besoin de ta position pour trouver les pharmacies près de toi."
         }
       ],
       [
