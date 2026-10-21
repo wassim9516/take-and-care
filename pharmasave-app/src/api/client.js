@@ -12,7 +12,7 @@ const api = axios.create({
   timeout: 8000,
 });
 
-// Callback enregistré par AuthContext pour déconnecter l'utilisateur
+// Callback enregistreé par AuthContext pour déconnecter l'utilisateur
 let _onDeconnexion = null;
 export const setDeconnexionCallback = (fn) => { _onDeconnexion = fn; };
 
