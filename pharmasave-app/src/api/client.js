@@ -25,7 +25,7 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
-// Intercepte les 401 (token expiré ou invalide) → déconnexion automatique
+// Intercepte les 401 (token expiré ou  invalide) → déconnexion automatique
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
