@@ -194,7 +194,6 @@ export default function OfferDetailScreen({ route, navigation }) {
 
 // -------------------------------------------------------
 // PiedPageStripe — utilise useStripe(), monté uniquement si Stripe est actif
-// Ce composant ne doit JAMAIS être rendu hors d'un StripeProvider
 // -------------------------------------------------------
 function PiedPageStripe({ offre, navigation }) {
   const { initPaymentSheet, presentPaymentSheet } = useStripeHook();
