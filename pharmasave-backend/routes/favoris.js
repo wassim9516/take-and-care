@@ -7,6 +7,11 @@ const router         = express.Router();
 const authMiddleware = require('../middleware/auth');
 const { Favori, Offre, Pharmacie } = require('../database/models');
 
+function idValide(valeur) {
+  const id = Number(valeur);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
 // GET /api/favoris — Mes offres favorites
 router.get('/', authMiddleware, async (req, res) => {
   try {
@@ -17,7 +22,7 @@ router.get('/', authMiddleware, async (req, res) => {
         as: 'offre',
         where: { actif: true },
         required: true,
-        include: [{ model: Pharmacie, as: 'pharmacie', attributes: ['nom'] }],
+        include: [{ model: Pharmacie, as: 'pharmacie', attributes: ['nom', 'latitude', 'longitude'] }],
       }],
       order: [['createdAt', 'DESC']],
     });
@@ -25,6 +30,8 @@ router.get('/', authMiddleware, async (req, res) => {
     const resultat = favoris.map(f => ({
       ...f.offre.toJSON(),
       pharmacieNom: f.offre.pharmacie?.nom,
+      pharmacieLat: f.offre.pharmacie?.latitude,
+      pharmacieLng: f.offre.pharmacie?.longitude,
     }));
 
     res.json(resultat);
@@ -48,10 +55,13 @@ router.get('/ids', authMiddleware, async (req, res) => {
 
 // POST /api/favoris — Ajouter un favori
 router.post('/', authMiddleware, async (req, res) => {
-  const { offreId } = req.body;
+  const offreId = idValide(req.body.offreId);
   if (!offreId) return res.status(400).json({ erreur: 'offreId requis.' });
 
   try {
+    if (!(await Offre.findByPk(offreId, { attributes: ['id'] }))) {
+      return res.status(404).json({ erreur: 'Offre introuvable.' });
+    }
     const [favori, cree] = await Favori.findOrCreate({
       where: { utilisateurId: req.utilisateur.id, offreId },
     });
@@ -63,9 +73,11 @@ router.post('/', authMiddleware, async (req, res) => {
 
 // DELETE /api/favoris/:offreId — Retirer un favori
 router.delete('/:offreId', authMiddleware, async (req, res) => {
+  const offreId = idValide(req.params.offreId);
+  if (!offreId) return res.status(400).json({ erreur: 'Identifiant invalide.' });
   try {
     await Favori.destroy({
-      where: { utilisateurId: req.utilisateur.id, offreId: req.params.offreId },
+      where: { utilisateurId: req.utilisateur.id, offreId },
     });
     res.json({ message: 'Favori retiré.' });
   } catch (err) {

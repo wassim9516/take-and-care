@@ -20,6 +20,13 @@ function normaliserTelephone(tel) {
   return '+33' + n;
 }
 
+// Les SMS de vérification ne partent que vers des mobiles français
+// (métropole : +33 6 / +33 7). Évite le « SMS pumping » : des robots
+// qui déclenchent des SMS vers des numéros surtaxés à l'étranger.
+function estMobileFrancais(numeroNormalise) {
+  return /^\+33[67]\d{8}$/.test(numeroNormalise);
+}
+
 async function envoyerSMS(telephone, message) {
   const numero = normaliserTelephone(telephone);
 
@@ -42,4 +49,4 @@ async function envoyerSMS(telephone, message) {
   });
 }
 
-module.exports = { envoyerSMS, normaliserTelephone };
+module.exports = { envoyerSMS, normaliserTelephone, estMobileFrancais };

@@ -1,22 +1,25 @@
 // ============================================================
-// routes/auth.js — Inscription et connexion
+// routes/auth.js — Comptes : inscription, connexion, profil,
+// mot de passe oublié, suppression de compte
 // ============================================================
 
 const express  = require('express');
 const router   = express.Router();
 const bcrypt   = require('bcryptjs');
+const crypto   = require('crypto');
 const jwt      = require('jsonwebtoken');
 const validator = require('validator');
-const { randomInt } = require('crypto');
 const { Expo } = require('expo-server-sdk');
 const sequelize = require('../database/connection');
-const { Utilisateur, Pharmacie } = require('../database/models');
-const { envoyerSMS, normaliserTelephone } = require('../utils/sms');
+const { Utilisateur, Pharmacie, Offre, Reservation, Favori } = require('../database/models');
+const { envoyerSMS, normaliserTelephone, estMobileFrancais } = require('../utils/sms');
+const { envoyerEmail } = require('../utils/email');
+const { creerCode, verifierCode, donneesEnAttente } = require('../utils/codes');
+const { annulerReservation } = require('../utils/reservations');
 const authMiddleware = require('../middleware/auth');
 const { limiteAuth } = require('../utils/rateLimits');
 
-const MOT_DE_PASSE_MIN = 6;
-const CODE_ESSAIS_MAX  = 5;
+const MOT_DE_PASSE_MIN = 8;
 
 function validerChampTexte(valeur, min, max, nom) {
   if (!valeur || typeof valeur !== 'string') return `${nom} est obligatoire.`;
@@ -44,9 +47,12 @@ function validerMotDePasse(motDePasse) {
   if (typeof motDePasse !== 'string' || motDePasse.length < MOT_DE_PASSE_MIN) {
     return `Le mot de passe doit faire au moins ${MOT_DE_PASSE_MIN} caractères.`;
   }
-  if (motDePasse.length > 72) {
+  if (Buffer.byteLength(motDePasse) > 72) {
     // bcrypt ignore tout ce qui dépasse 72 octets
     return 'Le mot de passe ne peut pas dépasser 72 caractères.';
+  }
+  if (!/[A-Za-z]/.test(motDePasse) || !/\d/.test(motDePasse)) {
+    return 'Le mot de passe doit contenir au moins une lettre et un chiffre.';
   }
   return null;
 }
@@ -55,6 +61,11 @@ function validerTelephone(telephone) {
   if (!telephone || typeof telephone !== 'string') return null;
   const n = normaliserTelephone(telephone);
   return /^\+\d{8,15}$/.test(n) ? n : null;
+}
+
+// Aperçu masqué d'un numéro (ex: +336******89)
+function apercuTelephone(numero) {
+  return numero.slice(0, 4) + '*'.repeat(Math.max(numero.length - 6, 0)) + numero.slice(-2);
 }
 
 // Token JWT valable 7 jours. "v" = tokenVersion : changer de mot de passe
@@ -75,33 +86,20 @@ function profilPublic(utilisateur, pharmacieValidee) {
     email:       utilisateur.email,
     telephone:   utilisateur.telephone,
     pharmacieId: utilisateur.pharmacieId,
+    notifOffres: utilisateur.notifOffres,
+    ...(utilisateur.estAdmin ? { estAdmin: true } : {}),
     ...(utilisateur.pharmacieId ? { pharmacieValidee: !!pharmacieValidee } : {}),
   };
 }
 
-// Stockage temporaire des codes de vérification en mémoire
-// { telephone_normalisé: { code, expireAt, essais, donnees } }
-// ⚠️ Perdu au redémarrage du serveur : l'utilisateur doit redemander un code.
-const codesVerification = new Map();
-
-// Rate-limit SMS : max 3 demandes par 10 min par numéro
-// { telephone_normalisé: { count, resetAt } }
-const rateLimitSMS = new Map();
-
-// Nettoyage automatique des codes expirés et des entrées rate-limit toutes les 15 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [cle, val] of codesVerification.entries()) {
-    if (val.expireAt < now) codesVerification.delete(cle);
-  }
-  for (const [cle, val] of rateLimitSMS.entries()) {
-    if (val.resetAt < now) rateLimitSMS.delete(cle);
-  }
-}, 15 * 60 * 1000).unref();
+function repondreErreur(res, err) {
+  if (err.status) return res.status(err.status).json({ erreur: err.message });
+  console.error(err);
+  return res.status(500).json({ erreur: 'Erreur serveur.' });
+}
 
 // -------------------------------------------------------
 // POST /api/auth/connexion
-// Connecte un utilisateur existant
 // Body : { email, motDePasse }
 // -------------------------------------------------------
 router.post('/connexion', limiteAuth, async (req, res) => {
@@ -118,7 +116,7 @@ router.post('/connexion', limiteAuth, async (req, res) => {
       include: [{ model: Pharmacie, as: 'pharmacie', attributes: ['valide'] }],
     });
     // Message volontairement vague pour ne pas indiquer si l'email existe
-    if (!utilisateur || !(await bcrypt.compare(motDePasse, utilisateur.motDePasse))) {
+    if (!utilisateur || utilisateur.supprimeLe || !(await bcrypt.compare(motDePasse, utilisateur.motDePasse))) {
       return res.status(401).json({ erreur: 'Email ou mot de passe incorrect.' });
     }
 
@@ -128,27 +126,26 @@ router.post('/connexion', limiteAuth, async (req, res) => {
       utilisateur: profilPublic(utilisateur, utilisateur.pharmacie?.valide),
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ erreur: 'Erreur serveur.' });
+    repondreErreur(res, err);
   }
 });
 
 // -------------------------------------------------------
 // GET /api/auth/moi
-// Retourne les infos de l'utilisateur connecté
 // -------------------------------------------------------
 router.get('/moi', authMiddleware, async (req, res) => {
   try {
     const utilisateur = await Utilisateur.findByPk(req.utilisateur.id);
     res.json(profilPublic(utilisateur, req.utilisateur.pharmacieValidee));
   } catch (err) {
-    res.status(500).json({ erreur: 'Erreur serveur.' });
+    repondreErreur(res, err);
   }
 });
 
 // -------------------------------------------------------
 // PUT /api/auth/profil
-// Modifie les infos du compte (prenom, nom, telephone)
+// Modifie prénom et nom. Le téléphone d'un client est vérifié par SMS
+// (voir /telephone/demander) ; un pharmacien peut le modifier ici.
 // -------------------------------------------------------
 router.put('/profil', authMiddleware, async (req, res) => {
   const { prenom, nom, telephone } = req.body;
@@ -157,22 +154,65 @@ router.put('/profil', authMiddleware, async (req, res) => {
               || validerChampTexte(nom, 2, 50, 'Nom');
   if (erreur) return res.status(400).json({ erreur });
 
-  let telephoneNormalise;
-  if (telephone !== undefined && telephone !== null && telephone !== '') {
-    telephoneNormalise = validerTelephone(telephone);
-    if (!telephoneNormalise) return res.status(400).json({ erreur: 'Numéro de téléphone invalide.' });
+  const changements = { prenom: prenom.trim(), nom: nom.trim() };
+
+  if (req.utilisateur.pharmacieId && telephone !== undefined) {
+    if (telephone === null || telephone === '') {
+      changements.telephone = null;
+    } else {
+      const telephoneNormalise = validerTelephone(telephone);
+      if (!telephoneNormalise) return res.status(400).json({ erreur: 'Numéro de téléphone invalide.' });
+      changements.telephone = telephoneNormalise;
+    }
   }
 
   try {
     const utilisateur = await Utilisateur.findByPk(req.utilisateur.id);
-    await utilisateur.update({
-      prenom: prenom.trim(),
-      nom:    nom.trim(),
-      ...(telephoneNormalise ? { telephone: telephoneNormalise } : {}),
-    });
+    await utilisateur.update(changements);
     res.json({ message: 'Profil mis à jour.', utilisateur: profilPublic(utilisateur, req.utilisateur.pharmacieValidee) });
   } catch (err) {
-    res.status(500).json({ erreur: 'Erreur serveur.' });
+    repondreErreur(res, err);
+  }
+});
+
+// -------------------------------------------------------
+// POST /api/auth/telephone/demander — Étape 1 du changement de
+// téléphone : envoie un code au nouveau numéro. Body : { telephone }
+// -------------------------------------------------------
+router.post('/telephone/demander', limiteAuth, authMiddleware, async (req, res) => {
+  const numero = validerTelephone(req.body.telephone);
+  if (!numero || !estMobileFrancais(numero)) {
+    return res.status(400).json({ erreur: 'Saisis un numéro de mobile français valide (06 ou 07).' });
+  }
+
+  try {
+    const code = await creerCode({ type: 'telephone', cle: numero, donnees: { utilisateurId: req.utilisateur.id } });
+    await envoyerSMS(numero, `Take & Care — Code de confirmation de ton nouveau numéro : ${code} (valable 10 min)`);
+    res.json({ message: 'Code envoyé !', apercu: apercuTelephone(numero) });
+  } catch (err) {
+    repondreErreur(res, err);
+  }
+});
+
+// -------------------------------------------------------
+// POST /api/auth/telephone/confirmer — Body : { telephone, code }
+// -------------------------------------------------------
+router.post('/telephone/confirmer', limiteAuth, authMiddleware, async (req, res) => {
+  const numero = validerTelephone(req.body.telephone);
+  if (!numero) return res.status(400).json({ erreur: 'Numéro de téléphone invalide.' });
+
+  try {
+    const donnees = await donneesEnAttente({ type: 'telephone', cle: numero });
+    if (!donnees || donnees.utilisateurId !== req.utilisateur.id) {
+      return res.status(400).json({ erreur: 'Aucun code en attente pour ce numéro.' });
+    }
+    await verifierCode({ type: 'telephone', cle: numero, code: req.body.code });
+
+    const utilisateur = await Utilisateur.findByPk(req.utilisateur.id);
+    await utilisateur.update({ telephone: numero });
+    res.json({ message: 'Numéro mis à jour.', utilisateur: profilPublic(utilisateur, req.utilisateur.pharmacieValidee) });
+  } catch (err) {
+    repondreErreur(res, err);
   }
 });
 
@@ -199,14 +239,75 @@ router.put('/mot-de-passe', limiteAuth, authMiddleware, async (req, res) => {
     await utilisateur.update({ motDePasse: hash, tokenVersion: utilisateur.tokenVersion + 1 });
     res.json({ message: 'Mot de passe modifié avec succès.', token: genererToken(utilisateur) });
   } catch (err) {
-    res.status(500).json({ erreur: 'Erreur serveur.' });
+    repondreErreur(res, err);
+  }
+});
+
+// -------------------------------------------------------
+// POST /api/auth/mot-de-passe-oublie — Body : { email }
+// Envoie un code par email. Réponse identique que le compte existe
+// ou non (on ne révèle pas quels emails sont inscrits).
+// -------------------------------------------------------
+router.post('/mot-de-passe-oublie', limiteAuth, async (req, res) => {
+  const email = normaliserEmail(req.body.email);
+  if (!email) return res.status(400).json({ erreur: 'Email invalide.' });
+
+  const reponse = { message: 'Si un compte existe avec cet email, un code vient de t\'être envoyé.' };
+
+  try {
+    const utilisateur = await Utilisateur.findOne({ where: { email } });
+    if (!utilisateur || utilisateur.supprimeLe) return res.json(reponse);
+
+    let code;
+    try {
+      code = await creerCode({ type: 'reinitialisation', cle: email, donnees: { utilisateurId: utilisateur.id } });
+    } catch (err) {
+      // Trop de demandes : on ne le signale pas (même réponse)
+      if (err.status === 429) return res.json(reponse);
+      throw err;
+    }
+
+    await envoyerEmail(
+      email,
+      'Take & Care — Réinitialisation de ton mot de passe',
+      `Bonjour ${utilisateur.prenom},\n\n` +
+      `Ton code pour choisir un nouveau mot de passe : ${code}\n` +
+      `Il est valable 10 minutes.\n\n` +
+      `Si tu n'es pas à l'origine de cette demande, ignore cet email : ton mot de passe ne change pas.`
+    );
+    res.json(reponse);
+  } catch (err) {
+    repondreErreur(res, err);
+  }
+});
+
+// -------------------------------------------------------
+// POST /api/auth/reinitialiser-mot-de-passe
+// Body : { email, code, nouveauMotDePasse }
+// -------------------------------------------------------
+router.post('/reinitialiser-mot-de-passe', limiteAuth, async (req, res) => {
+  const email = normaliserEmail(req.body.email);
+  if (!email) return res.status(400).json({ erreur: 'Email invalide.' });
+  const erreurMdp = validerMotDePasse(req.body.nouveauMotDePasse);
+  if (erreurMdp) return res.status(400).json({ erreur: erreurMdp });
+
+  try {
+    const donnees = await verifierCode({ type: 'reinitialisation', cle: email, code: req.body.code });
+    const utilisateur = await Utilisateur.findByPk(donnees?.utilisateurId);
+    if (!utilisateur || utilisateur.supprimeLe || utilisateur.email !== email) {
+      return res.status(400).json({ erreur: 'Compte introuvable.' });
+    }
+    const hash = await bcrypt.hash(req.body.nouveauMotDePasse, 10);
+    // tokenVersion + 1 : toutes les sessions ouvertes sont déconnectées
+    await utilisateur.update({ motDePasse: hash, tokenVersion: utilisateur.tokenVersion + 1 });
+    res.json({ message: 'Mot de passe modifié. Tu peux te connecter.' });
+  } catch (err) {
+    repondreErreur(res, err);
   }
 });
 
 // -------------------------------------------------------
 // POST /api/auth/deconnexion-partout
-// Invalide tous les tokens (autres appareils, navigateurs oubliés…)
-// et renvoie un nouveau token pour la session courante.
 // -------------------------------------------------------
 router.post('/deconnexion-partout', authMiddleware, async (req, res) => {
   try {
@@ -214,14 +315,15 @@ router.post('/deconnexion-partout', authMiddleware, async (req, res) => {
     await utilisateur.update({ tokenVersion: utilisateur.tokenVersion + 1 });
     res.json({ message: 'Toutes les autres sessions ont été déconnectées.', token: genererToken(utilisateur) });
   } catch (err) {
-    res.status(500).json({ erreur: 'Erreur serveur.' });
+    repondreErreur(res, err);
   }
 });
 
 // -------------------------------------------------------
 // PUT /api/auth/push-token
-// Sauvegarde le token Expo push de l'utilisateur connecté
-// Body : { pushToken }
+// Body : { pushToken, latitude?, longitude? }
+// La position (facultative) est arrondie à ~1 km et sert uniquement
+// à envoyer les nouvelles offres des pharmacies proches.
 // -------------------------------------------------------
 router.put('/push-token', authMiddleware, async (req, res) => {
   const { pushToken } = req.body;
@@ -229,20 +331,49 @@ router.put('/push-token', authMiddleware, async (req, res) => {
     return res.status(400).json({ erreur: 'pushToken invalide.' });
   }
 
+  const lat = parseFloat(req.body.latitude);
+  const lng = parseFloat(req.body.longitude);
+  const position = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
+    ? { notifLat: Math.round(lat * 100) / 100, notifLng: Math.round(lng * 100) / 100 }
+    : {};
+
   try {
-    await Utilisateur.update(
-      { pushToken },
-      { where: { id: req.utilisateur.id } }
-    );
+    // Un appareil = un compte : retire ce token des autres comptes
+    await Utilisateur.update({ pushToken: null }, { where: { pushToken } });
+    await Utilisateur.update({ pushToken, ...position }, { where: { id: req.utilisateur.id } });
     res.json({ message: 'Token enregistré.' });
   } catch (err) {
-    res.status(500).json({ erreur: 'Erreur serveur.' });
+    repondreErreur(res, err);
+  }
+});
+
+// DELETE /api/auth/push-token — appelé à la déconnexion
+router.delete('/push-token', authMiddleware, async (req, res) => {
+  try {
+    await Utilisateur.update({ pushToken: null }, { where: { id: req.utilisateur.id } });
+    res.json({ message: 'Notifications désactivées sur cet appareil.' });
+  } catch (err) {
+    repondreErreur(res, err);
+  }
+});
+
+// PUT /api/auth/notifications — Body : { notifOffres: boolean }
+router.put('/notifications', authMiddleware, async (req, res) => {
+  if (typeof req.body.notifOffres !== 'boolean') {
+    return res.status(400).json({ erreur: 'notifOffres doit être vrai ou faux.' });
+  }
+  try {
+    const utilisateur = await Utilisateur.findByPk(req.utilisateur.id);
+    await utilisateur.update({ notifOffres: req.body.notifOffres });
+    res.json({ message: 'Préférence enregistrée.', utilisateur: profilPublic(utilisateur, req.utilisateur.pharmacieValidee) });
+  } catch (err) {
+    repondreErreur(res, err);
   }
 });
 
 // -------------------------------------------------------
 // POST /api/auth/demander-verification
-// Étape 1 inscription : génère un code SMS et le stocke temporairement
+// Étape 1 inscription : envoie un code SMS
 // Body : { prenom, nom, email, motDePasse, telephone }
 // -------------------------------------------------------
 router.post('/demander-verification', limiteAuth, async (req, res) => {
@@ -258,8 +389,10 @@ router.post('/demander-verification', limiteAuth, async (req, res) => {
   const erreurMdp = validerMotDePasse(motDePasse);
   if (erreurMdp) return res.status(400).json({ erreur: erreurMdp });
 
-  const numeroNormalise = validerTelephone(telephone);
-  if (!numeroNormalise) return res.status(400).json({ erreur: 'Numéro de téléphone invalide.' });
+  const numero = validerTelephone(telephone);
+  if (!numero || !estMobileFrancais(numero)) {
+    return res.status(400).json({ erreur: 'Saisis un numéro de mobile français valide (06 ou 07).' });
+  }
 
   try {
     const existant = await Utilisateur.findOne({ where: { email } });
@@ -267,45 +400,38 @@ router.post('/demander-verification', limiteAuth, async (req, res) => {
       return res.status(409).json({ erreur: 'Cet email est déjà utilisé.' });
     }
 
-    // Rate-limit : max 3 SMS par 10 minutes pour ce numéro
-    const rl = rateLimitSMS.get(numeroNormalise);
-    if (rl && rl.resetAt > Date.now()) {
-      if (rl.count >= 3) {
-        const attente = Math.ceil((rl.resetAt - Date.now()) / 60000);
-        return res.status(429).json({ erreur: `Trop de tentatives. Réessaie dans ${attente} minute(s).` });
-      }
-      rl.count++;
-    } else {
-      rateLimitSMS.set(numeroNormalise, { count: 1, resetAt: Date.now() + 10 * 60 * 1000 });
-    }
-
-    // Code à 6 chiffres cryptographiquement sûr valable 10 minutes.
-    // Le mot de passe est haché tout de suite : jamais gardé en clair en mémoire.
-    const code = String(randomInt(100000, 1000000));
-    codesVerification.set(numeroNormalise, {
-      code,
-      essais:   0,
-      expireAt: Date.now() + 10 * 60 * 1000,
-      donnees:  {
-        prenom: prenom.trim(),
-        nom:    nom.trim(),
-        email,
-        hash:   await bcrypt.hash(motDePasse, 10),
-      },
+    // Le mot de passe est haché tout de suite : jamais gardé en clair
+    const code = await creerCode({
+      type: 'inscription',
+      cle:  numero,
+      donnees: { prenom: prenom.trim(), nom: nom.trim(), email, hash: await bcrypt.hash(motDePasse, 10) },
     });
 
-    await envoyerSMS(
-      numeroNormalise,
-      `Take & Care — Ton code de vérification : ${code} (valable 10 min)`
-    );
-
-    // Retourne un aperçu masqué du numéro (ex: +33 6 ** ** ** 89)
-    const apercu = numeroNormalise.slice(0, -2).replace(/\d(?=\d{2})/g, '*') + numeroNormalise.slice(-2);
-
-    res.json({ message: 'Code envoyé !', apercu });
+    await envoyerSMS(numero, `Take & Care — Ton code de vérification : ${code} (valable 10 min)`);
+    res.json({ message: 'Code envoyé !', apercu: apercuTelephone(numero) });
   } catch (err) {
+    if (err.status) return repondreErreur(res, err);
     console.error(err);
     res.status(500).json({ erreur: 'Impossible d\'envoyer le SMS. Vérifie le numéro.' });
+  }
+});
+
+// -------------------------------------------------------
+// POST /api/auth/renvoyer-code — Body : { telephone }
+// Renvoie un code d'inscription avec les données déjà saisies
+// -------------------------------------------------------
+router.post('/renvoyer-code', limiteAuth, async (req, res) => {
+  const numero = validerTelephone(req.body.telephone);
+  if (!numero) return res.status(400).json({ erreur: 'Numéro de téléphone invalide.' });
+
+  try {
+    const donnees = await donneesEnAttente({ type: 'inscription', cle: numero });
+    if (!donnees) return res.status(400).json({ erreur: 'Inscription expirée. Recommence l\'inscription.' });
+    const code = await creerCode({ type: 'inscription', cle: numero });
+    await envoyerSMS(numero, `Take & Care — Ton code de vérification : ${code} (valable 10 min)`);
+    res.json({ message: 'Code renvoyé !', apercu: apercuTelephone(numero) });
+  } catch (err) {
+    repondreErreur(res, err);
   }
 });
 
@@ -321,32 +447,11 @@ router.post('/confirmer-inscription', limiteAuth, async (req, res) => {
     return res.status(400).json({ erreur: 'Téléphone et code sont requis.' });
   }
 
-  const numeroNormalise = normaliserTelephone(telephone);
-  const entree = codesVerification.get(numeroNormalise);
-
-  if (!entree) {
-    return res.status(400).json({ erreur: 'Aucun code en attente pour ce numéro. Recommence l\'inscription.' });
-  }
-  if (Date.now() > entree.expireAt) {
-    codesVerification.delete(numeroNormalise);
-    return res.status(400).json({ erreur: 'Code expiré. Recommence l\'inscription.' });
-  }
-  if (entree.code !== String(code).trim()) {
-    // Limite les essais par code pour empêcher de deviner par force brute
-    entree.essais++;
-    if (entree.essais >= CODE_ESSAIS_MAX) {
-      codesVerification.delete(numeroNormalise);
-      return res.status(400).json({ erreur: 'Trop d\'essais incorrects. Recommence l\'inscription.' });
-    }
-    return res.status(400).json({ erreur: `Code incorrect. ${CODE_ESSAIS_MAX - entree.essais} essai(s) restant(s).` });
-  }
-
-  // Code valide → crée le compte
-  codesVerification.delete(numeroNormalise);
+  const numero = normaliserTelephone(telephone);
   try {
-    const { prenom, nom, email, hash } = entree.donnees;
+    const { prenom, nom, email, hash } = await verifierCode({ type: 'inscription', cle: numero, code });
     const utilisateur = await Utilisateur.create({
-      prenom, nom, email, telephone: numeroNormalise,
+      prenom, nom, email, telephone: numero,
       motDePasse: hash,
     });
 
@@ -359,8 +464,7 @@ router.post('/confirmer-inscription', limiteAuth, async (req, res) => {
     if (err.name === 'SequelizeUniqueConstraintError') {
       return res.status(409).json({ erreur: 'Cet email est déjà utilisé.' });
     }
-    console.error(err);
-    res.status(500).json({ erreur: 'Erreur serveur.' });
+    repondreErreur(res, err);
   }
 });
 
@@ -370,9 +474,6 @@ router.post('/confirmer-inscription', limiteAuth, async (req, res) => {
 // La pharmacie est créée "en attente" : elle ne peut ni publier
 // d'offres ni encaisser tant qu'un admin ne l'a pas validée
 // (npm run valider-pharmacie -- <id>).
-// Body : { prenom, nom, email, motDePasse,
-//          nomPharmacie, adresse, telephone, horaires,
-//          latitude, longitude }
 // -------------------------------------------------------
 router.post('/inscription-pharmacien', limiteAuth, async (req, res) => {
   const {
@@ -403,7 +504,7 @@ router.post('/inscription-pharmacien', limiteAuth, async (req, res) => {
   const lat = parseFloat(latitude);
   const lng = parseFloat(longitude);
   if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-    return res.status(400).json({ erreur: 'Latitude et longitude valides sont obligatoires pour la pharmacie.' });
+    return res.status(400).json({ erreur: 'Adresse introuvable : utilise « Localiser l\'adresse » ou ta position actuelle.' });
   }
 
   try {
@@ -448,8 +549,78 @@ router.post('/inscription-pharmacien', limiteAuth, async (req, res) => {
     if (err.name === 'SequelizeUniqueConstraintError') {
       return res.status(409).json({ erreur: 'Cet email est déjà utilisé.' });
     }
-    console.error(err);
-    res.status(500).json({ erreur: 'Erreur serveur.' });
+    repondreErreur(res, err);
+  }
+});
+
+// -------------------------------------------------------
+// DELETE /api/auth/compte — Body : { motDePasse }
+// Suppression du compte (exigée par l'App Store et le RGPD).
+// Les données personnelles sont anonymisées ; les réservations passées
+// restent (anonymes) pour la comptabilité des pharmacies.
+// - Client : ses réservations en cours sont annulées et remboursées.
+// - Pharmacien : refusé s'il reste des paniers à retirer ; sinon ses
+//   offres sont masquées et la pharmacie n'est plus visible.
+// -------------------------------------------------------
+router.delete('/compte', limiteAuth, authMiddleware, async (req, res) => {
+  const { motDePasse } = req.body;
+  if (typeof motDePasse !== 'string' || !motDePasse) {
+    return res.status(400).json({ erreur: 'Confirme avec ton mot de passe.' });
+  }
+
+  try {
+    const utilisateur = await Utilisateur.findByPk(req.utilisateur.id);
+    if (!(await bcrypt.compare(motDePasse, utilisateur.motDePasse))) {
+      return res.status(401).json({ erreur: 'Mot de passe incorrect.' });
+    }
+
+    const pharmacieId = utilisateur.pharmacieId;
+    if (pharmacieId) {
+      const enCours = await Reservation.count({
+        where: { statut: 'confirmee' },
+        include: [{ model: Offre, as: 'offre', where: { pharmacieId }, required: true }],
+      });
+      if (enCours > 0) {
+        return res.status(409).json({
+          erreur: `Il reste ${enCours} panier(s) à retirer. Valide ou laisse expirer ces réservations avant de supprimer ton compte.`,
+        });
+      }
+    } else {
+      // Annule (et rembourse) les réservations en cours, une par une
+      const enCours = await Reservation.findAll({
+        where: { utilisateurId: utilisateur.id, statut: 'confirmee' },
+        attributes: ['id'],
+      });
+      for (const { id } of enCours) {
+        await annulerReservation({ reservationId: id, utilisateurId: utilisateur.id });
+      }
+    }
+
+    await sequelize.transaction(async (t) => {
+      if (pharmacieId) {
+        await Offre.update({ actif: false }, { where: { pharmacieId }, transaction: t });
+        await Pharmacie.update({ valide: false }, { where: { id: pharmacieId }, transaction: t });
+      }
+      await Favori.destroy({ where: { utilisateurId: utilisateur.id }, transaction: t });
+      await utilisateur.update({
+        prenom:      'Compte',
+        nom:         'supprimé',
+        email:       `supprime-${utilisateur.id}-${crypto.randomBytes(4).toString('hex')}@supprime.invalid`,
+        motDePasse:  await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
+        telephone:   null,
+        pushToken:   null,
+        notifLat:    null,
+        notifLng:    null,
+        notifOffres: false,
+        pharmacieId: null,
+        tokenVersion: utilisateur.tokenVersion + 1,
+        supprimeLe:  new Date(),
+      }, { transaction: t });
+    });
+
+    res.json({ message: 'Ton compte a été supprimé.' });
+  } catch (err) {
+    repondreErreur(res, err);
   }
 });
 

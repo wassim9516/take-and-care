@@ -8,7 +8,20 @@ const { stripe }     = require('../utils/stripe');
 const authMiddleware = require('../middleware/auth');
 const { pharmacienValide } = authMiddleware;
 const { Offre, Pharmacie } = require('../database/models');
-const { creerReservation } = require('../utils/reservations');
+const { creerReservation, offrePerimee } = require('../utils/reservations');
+
+// Le compte Stripe Connect de la pharmacie peut-il recevoir des paiements ?
+// (inscription Stripe terminée et virements activés)
+async function compteConnectPret(stripeAccountId) {
+  if (!stripeAccountId) return false;
+  try {
+    const compte = await stripe.accounts.retrieve(stripeAccountId);
+    return !!compte.charges_enabled && compte.capabilities?.transfers === 'active';
+  } catch (err) {
+    console.error('Stripe Connect :', err.message);
+    return false;
+  }
+}
 
 const COMMISSION_TAUX = parseFloat(process.env.COMMISSION_TAUX || '0.10');
 
@@ -28,8 +41,15 @@ router.post('/intent', authMiddleware, async (req, res) => {
     });
 
     if (!offre || !offre.pharmacie?.valide) return res.status(404).json({ erreur: 'Offre introuvable.' });
-    if (!offre.actif || offre.quantiteDisponible <= 0) {
+    if (!offre.actif || offre.quantiteDisponible <= 0 || offrePerimee(offre)) {
       return res.status(400).json({ erreur: 'Cette offre n\'est plus disponible.' });
+    }
+
+    // L'argent va directement à la pharmacie : sans compte Connect actif,
+    // elle ne peut pas encore vendre en ligne (sinon les fonds resteraient
+    // bloqués sur le compte de la plateforme)
+    if (!(await compteConnectPret(offre.pharmacie.stripeAccountId))) {
+      return res.status(400).json({ erreur: 'Cette pharmacie n\'accepte pas encore le paiement en ligne. Réessaie bientôt.' });
     }
 
     const montantCentimes    = Math.round(offre.prixReduit * 100);
@@ -45,11 +65,9 @@ router.post('/intent', authMiddleware, async (req, res) => {
       },
     };
 
-    // Split automatique si la pharmacie a un compte Stripe Connect
-    if (offre.pharmacie?.stripeAccountId) {
-      params.application_fee_amount = commissionCentimes;
-      params.transfer_data = { destination: offre.pharmacie.stripeAccountId };
-    }
+    // Split automatique : la pharmacie reçoit le montant moins la commission
+    params.application_fee_amount = commissionCentimes;
+    params.transfer_data = { destination: offre.pharmacie.stripeAccountId };
 
     const paymentIntent = await stripe.paymentIntents.create(params);
 
@@ -111,7 +129,8 @@ router.post('/onboarding', authMiddleware, pharmacienValide, async (req, res) =>
 // Retourne le statut du compte Stripe Connect de la pharmacie
 // -------------------------------------------------------
 router.get('/compte', authMiddleware, async (req, res) => {
-  if (!stripe) return res.json({ connecte: false });
+  const commissionTaux = COMMISSION_TAUX;
+  if (!stripe) return res.json({ connecte: false, paiementsActifs: false, commissionTaux });
   const pharmacieId = req.utilisateur.pharmacieId;
   if (!pharmacieId) return res.status(403).json({ erreur: 'Compte non lié à une pharmacie.' });
 
@@ -119,11 +138,13 @@ router.get('/compte', authMiddleware, async (req, res) => {
     const pharmacie = await Pharmacie.findByPk(pharmacieId);
 
     if (!pharmacie.stripeAccountId) {
-      return res.json({ connecte: false });
+      return res.json({ connecte: false, paiementsActifs: true, commissionTaux });
     }
 
     const compte = await stripe.accounts.retrieve(pharmacie.stripeAccountId);
     res.json({
+      paiementsActifs: true,
+      commissionTaux,
       connecte:        compte.charges_enabled && compte.payouts_enabled,
       chargesActives:  compte.charges_enabled,
       virementsActifs: compte.payouts_enabled,

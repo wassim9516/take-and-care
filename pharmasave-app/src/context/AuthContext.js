@@ -6,11 +6,15 @@
 // entre tous les écrans sans avoir à la passer manuellement.
 // ============================================================
 
-import React, { createContext, useState, useEffect, useContext } from 'react';
+import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
+import * as Location from 'expo-location';
+import Constants from 'expo-constants';
 import { lireToken, enregistrerToken, supprimerToken } from '../api/tokenStorage';
-import { connexion, demanderVerification, confirmerInscription, getMonProfil, savePushToken, modifierProfil, setDeconnexionCallback } from '../api/client';
+import {
+  connexion, demanderVerification, confirmerInscription, getMonProfil, savePushToken,
+  supprimerPushToken, modifierProfil, setDeconnexionCallback, supprimerCompte as apiSupprimerCompte,
+} from '../api/client';
 
 // Configure l'affichage des notifications quand l'app est au premier plan
 Notifications.setNotificationHandler({
@@ -22,17 +26,39 @@ Notifications.setNotificationHandler({
   }),
 });
 
-async function enregistrerPushToken() {
+async function obtenirPushToken() {
   const { status } = await Notifications.requestPermissionsAsync();
   if (status !== 'granted') return null;
 
+  const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+  if (!projectId) return null; // Expo Go sans projet EAS : pas de push
+
   try {
-    const tokenData = await Notifications.getExpoPushTokenAsync();
+    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
     return tokenData.data;
   } catch {
-    // Sans projectId EAS (ex : Expo Go), pas de token push — l'app continue sans
     return null;
   }
+}
+
+// Dernière position connue, seulement si l'utilisateur a déjà donné la
+// permission (aucune demande ici). Sert à recevoir les offres proches.
+async function positionApproximative() {
+  try {
+    const { status } = await Location.getForegroundPermissionsAsync();
+    if (status !== 'granted') return null;
+    const loc = await Location.getLastKnownPositionAsync();
+    return loc?.coords ? { latitude: loc.coords.latitude, longitude: loc.coords.longitude } : null;
+  } catch {
+    return null;
+  }
+}
+
+// Enregistre le push token en arrière-plan (silencieux si erreur)
+function enregistrerPushToken() {
+  Promise.all([obtenirPushToken(), positionApproximative()])
+    .then(([token, position]) => { if (token) return savePushToken(token, position); })
+    .catch(() => {});
 }
 
 // Crée le contexte (accessible depuis n'importe quel écran)
@@ -51,64 +77,66 @@ export function AuthProvider({ children }) {
     setDeconnexionCallback(() => setUtilisateur(null));
   }, []);
 
-  // Au démarrage : vérifie si un token est déjà sauvegardé
-  useEffect(() => {
-    const verifierToken = async () => {
-      try {
-        const token = await lireToken();
-        if (token) {
-          const profil = await getMonProfil();
-          setUtilisateur(profil);
-        }
-      } catch (err) {
-        // Erreur réseau (pas de réponse) : garder le token, afficher l'écran d'erreur
-        if (!err.response) {
-          setErreurReseau(true);
-          return;
-        }
-        // Erreur 401 (token expiré ou révoqué) : déconnecter
-        await supprimerToken();
-      } finally {
-        setChargement(false);
+  const restaurerSession = useCallback(async () => {
+    try {
+      const token = await lireToken();
+      if (token) {
+        const profil = await getMonProfil();
+        setUtilisateur(profil);
+        // Le token push peut changer (réinstallation…) : on le renvoie
+        enregistrerPushToken();
       }
-    };
-    verifierToken();
+    } catch (err) {
+      // Erreur réseau (pas de réponse) : garder le token, afficher l'écran d'erreur
+      if (!err.response) {
+        setErreurReseau(true);
+        return;
+      }
+      // Erreur 401 (token expiré ou révoqué) : déconnecter
+      await supprimerToken();
+    } finally {
+      setChargement(false);
+    }
   }, []);
 
-  // -------------------------------------------------------
-  // Fonction de connexion
-  // -------------------------------------------------------
+  // Au démarrage : vérifie si un token est déjà sauvegardé
+  useEffect(() => { restaurerSession(); }, [restaurerSession]);
+
   const seConnecter = async (email, motDePasse) => {
     const data = await connexion(email, motDePasse);
     await enregistrerToken(data.token);
     setUtilisateur(data.utilisateur);
-    // Enregistre le push token en arrière-plan (silencieux si erreur)
-    enregistrerPushToken().then(token => { if (token) savePushToken(token).catch(() => {}); });
+    enregistrerPushToken();
   };
 
-  // -------------------------------------------------------
   // Inscription en 2 étapes avec vérification SMS
-  // -------------------------------------------------------
-  const demanderCodeSMS = async (prenom, nom, email, motDePasse, telephone) => {
-    return await demanderVerification(prenom, nom, email, motDePasse, telephone);
-  };
+  const demanderCodeSMS = (prenom, nom, email, motDePasse, telephone) =>
+    demanderVerification(prenom, nom, email, motDePasse, telephone);
 
   const confirmerCompte = async (telephone, code) => {
     const data = await confirmerInscription(telephone, code);
     await enregistrerToken(data.token);
     setUtilisateur(data.utilisateur);
-    enregistrerPushToken().then(token => { if (token) savePushToken(token).catch(() => {}); });
+    enregistrerPushToken();
   };
 
-  // -------------------------------------------------------
-  // Fonction de déconnexion
-  // -------------------------------------------------------
   const mettreAJourProfil = async (data) => {
     const resultat = await modifierProfil(data);
     setUtilisateur(resultat.utilisateur);
   };
 
+  // Après une action qui renvoie le profil à jour (téléphone, notifications)
+  const remplacerUtilisateur = (profil) => setUtilisateur(profil);
+
   const seDeconnecter = async () => {
+    // L'appareil ne doit plus recevoir les notifications de ce compte
+    await supprimerPushToken().catch(() => {});
+    await supprimerToken();
+    setUtilisateur(null);
+  };
+
+  const supprimerCompte = async (motDePasse) => {
+    await apiSupprimerCompte(motDePasse);
     await supprimerToken();
     setUtilisateur(null);
   };
@@ -116,18 +144,7 @@ export function AuthProvider({ children }) {
   const retenterConnexion = async () => {
     setErreurReseau(false);
     setChargement(true);
-    try {
-      const token = await lireToken();
-      if (token) {
-        const profil = await getMonProfil();
-        setUtilisateur(profil);
-      }
-    } catch (err) {
-      if (!err.response) setErreurReseau(true);
-      else await supprimerToken();
-    } finally {
-      setChargement(false);
-    }
+    await restaurerSession();
   };
 
   return (
@@ -139,8 +156,11 @@ export function AuthProvider({ children }) {
       demanderCodeSMS,
       confirmerCompte,
       seDeconnecter,
+      supprimerCompte,
       mettreAJourProfil,
+      remplacerUtilisateur,
       retenterConnexion,
+      enregistrerPushToken,
       estConnecte: !!utilisateur,
     }}>
       {children}

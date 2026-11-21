@@ -8,10 +8,8 @@ import {
   Plus, Euro, Hourglass, CalendarDays, Search, LayoutGrid, List, Pencil, Trash2, Clock,
   CalendarClock, Check, AlertTriangle, Download, Star, Ban, Calendar, Wallet, Landmark,
   Link as LienIcone, Sun, Baby, Pill, Bath, Droplet, ShoppingBasket, TrendingUp,
-  Loader2, Receipt, X,
+  Loader2, Receipt, X, ScanLine, ShieldCheck,
 } from 'lucide-react';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import { useAuth } from '../context/AuthContext';
 import {
   getOffresPharmacien, getReservationsPharmacien,
@@ -19,6 +17,7 @@ import {
   getPharmacie, getStatutStripe, demarrerOnboardingStripe,
 } from '../api/client';
 import FormulaireOffre   from '../components/FormulaireOffre';
+import ScannerQR         from '../components/ScannerQR';
 import Reglages          from './Reglages';
 import { usePreferences } from '../utils/preferences';
 import {
@@ -47,7 +46,14 @@ function IconeCategorie({ categorie, size = 13 }) {
   return <Icone size={size} strokeWidth={2} aria-hidden="true" />;
 }
 
-const COMMISSION = 0.1;
+// Montant gardé par la plateforme sur une réservation (enregistré à la
+// création ; 0 pour une réservation payée à la pharmacie)
+const commissionDe = (r) => r.commission || 0;
+
+// Réservation qui rapporte de l'argent à la pharmacie : retirée, à retirer,
+// ou expirée alors qu'elle avait été payée en ligne (non remboursée)
+const estEncaissee = (r) => r.statut === 'retiree' || r.statut === 'confirmee'
+  || (r.statut === 'expiree' && !!r.stripePaymentIntentId);
 
 const getDerniersjours = (n = 7) => {
   const days = [];
@@ -74,7 +80,7 @@ const joursAvant = (date) => {
   return Math.round((new Date(date) - auj) / 86400000);
 };
 
-export default function Dashboard() {
+export default function Dashboard({ onAdministration }) {
   const { pharmacien, seDeconnecter } = useAuth();
   const { notifier, confirmer } = useRetours();
   const [preferences] = usePreferences();
@@ -107,6 +113,7 @@ export default function Dashboard() {
   const [resaTrouvee, setResaTrouvee]             = useState(null);
   const [erreurRecherche, setErreurRecherche]     = useState('');
   const [validationEnCours, setValidationEnCours] = useState(false);
+  const [scanActif, setScanActif]                 = useState(false);
 
   // Filtres offres
   const [rechercheOffre, setRechercheOffre]       = useState('');
@@ -129,7 +136,7 @@ export default function Dashboard() {
     setChargement(true);
     try {
       const [dataOffres, dataResas] = await Promise.all([
-        getOffresPharmacien(pharmacieId),
+        getOffresPharmacien(),
         getReservationsPharmacien(pharmacieId),
       ]);
       if (idsConnus.current && alerteActive.current) {
@@ -158,12 +165,12 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [chargerDonnees, preferences.rafraichissement]);
 
-  // La note moyenne (onglet stats) vient de la fiche pharmacie
+  // Fiche pharmacie (nom pour les exports, note moyenne, réglages)
   useEffect(() => {
-    if ((onglet === 'reglages' || onglet === 'stats') && !pharmacieData && pharmacieId) {
+    if (!pharmacieData && pharmacieId) {
       getPharmacie().then(setPharmacieData).catch(() => {});
     }
-    if (onglet === 'paiements' && !stripeStatut) {
+    if (!stripeStatut && pharmacieId) {
       getStatutStripe().then(setStripeStatut).catch(() => setStripeStatut({ connecte: false }));
     }
   }, [onglet, pharmacieData, pharmacieId, stripeStatut]);
@@ -199,11 +206,9 @@ export default function Dashboard() {
     // Mise à jour optimiste : l'interrupteur bascule tout de suite
     setOffres(liste => liste.map(o => o.id === offre.id ? { ...o, actif: !o.actif } : o));
     try {
-      await modifierOffre(offre.id, {
-        ...offre,
-        produits: Array.isArray(offre.produits) ? offre.produits : [],
-        actif: !offre.actif,
-      });
+      // Seul le champ actif est envoyé : renvoyer l'offre entière écraserait
+      // le stock si des clients ont réservé depuis le dernier rafraîchissement
+      await modifierOffre(offre.id, { actif: !offre.actif });
       notifier(offre.actif ? 'Offre masquée aux clients.' : 'Offre visible par les clients.');
     } catch (err) {
       setOffres(liste => liste.map(o => o.id === offre.id ? { ...o, actif: offre.actif } : o));
@@ -222,18 +227,28 @@ export default function Dashboard() {
       await marquerReservationRetiree(resa.id);
       notifier('Retrait validé.');
       chargerDonnees();
-    } catch {
-      notifier('Erreur lors de la mise à jour.', 'erreur');
+    } catch (err) {
+      notifier(err.response?.data?.erreur || 'Erreur lors de la mise à jour.', 'erreur');
+      chargerDonnees();
     }
   };
 
-  const rechercherParNumero = () => {
+  // numero : passé par le scanner, sinon le champ de saisie
+  const rechercherParNumero = async (numero) => {
     setErreurRecherche('');
     setResaTrouvee(null);
-    const terme = numeroRecherche.trim().toLowerCase();
+    const terme = (typeof numero === 'string' ? numero : numeroRecherche).trim().toLowerCase();
     if (!terme) { setErreurRecherche('Saisis un numéro de réservation.'); return; }
-    const trouve = reservations.find(r => r.numero?.toLowerCase() === terme);
-    if (!trouve) { setErreurRecherche('Aucune réservation trouvée avec ce numéro.'); return; }
+    let trouve = reservations.find(r => r.numero?.toLowerCase() === terme);
+    if (!trouve) {
+      // Réservation faite depuis le dernier rafraîchissement : on recharge
+      try {
+        const fraiches = await getReservationsPharmacien(pharmacieId);
+        setReservations(fraiches);
+        trouve = fraiches.find(r => r.numero?.toLowerCase() === terme);
+      } catch { /* on garde la liste actuelle */ }
+    }
+    if (!trouve) { setErreurRecherche('Aucune réservation de ta pharmacie avec ce numéro.'); return; }
     if (trouve.statut !== 'confirmee') { setErreurRecherche(`Cette réservation est déjà « ${STATUTS[trouve.statut]?.label} ».`); return; }
     setResaTrouvee(trouve);
   };
@@ -246,14 +261,21 @@ export default function Dashboard() {
       fermerModalValidation();
       notifier(`Retrait validé pour ${resaTrouvee.utilisateur?.prenom || 'le client'}.`);
       chargerDonnees();
-    } catch {
-      setErreurRecherche('Erreur lors de la validation.');
+    } catch (err) {
+      setErreurRecherche(err.response?.data?.erreur || 'Erreur lors de la validation.');
     } finally {
       setValidationEnCours(false);
     }
   };
 
+  const resultatScan = (numero) => {
+    setScanActif(false);
+    setNumeroRecherche(numero);
+    rechercherParNumero(numero);
+  };
+
   const fermerModalValidation = () => {
+    setScanActif(false);
     setModalValidation(false);
     setNumeroRecherche('');
     setResaTrouvee(null);
@@ -272,7 +294,7 @@ export default function Dashboard() {
     if (!modalValidation) return;
     const surTouche = (e) => {
       if (e.key !== 'Escape') return;
-      setModalValidation(false); setNumeroRecherche(''); setResaTrouvee(null); setErreurRecherche('');
+      setScanActif(false); setModalValidation(false); setNumeroRecherche(''); setResaTrouvee(null); setErreurRecherche('');
     };
     window.addEventListener('keydown', surTouche);
     return () => window.removeEventListener('keydown', surTouche);
@@ -309,7 +331,7 @@ export default function Dashboard() {
   // -------------------------------------------------------
   // Statistiques
   // -------------------------------------------------------
-  const valides        = reservations.filter(r => r.statut !== 'annulee');
+  const valides        = reservations.filter(estEncaissee);
   const nbDisponibles  = offres.filter(o => o.actif && o.quantiteDisponible > 0).length;
   const nbReserve      = reservations.filter(r => r.statut === 'confirmee').length;
   const gainTotal      = valides.reduce((s, r) => s + (r.prixPaye || 0), 0);
@@ -318,9 +340,14 @@ export default function Dashboard() {
     confirmee: reservations.filter(r => r.statut === 'confirmee').length,
     retiree:   reservations.filter(r => r.statut === 'retiree').length,
     annulee:   reservations.filter(r => r.statut === 'annulee').length,
+    expiree:   reservations.filter(r => r.statut === 'expiree').length,
   };
+  const commissionTotale = valides.reduce((s, r) => s + commissionDe(r), 0);
+  const tauxCommission = stripeStatut?.commissionTaux ?? null;
 
-  const tauxRecuperation = valides.length > 0 ? Math.round((comptesStatuts.retiree / valides.length) * 100) : 0;
+  // Retirées / (retirées + expirées) : part des paniers réservés vraiment récupérés
+  const termines = comptesStatuts.retiree + comptesStatuts.expiree;
+  const tauxRecuperation = termines > 0 ? Math.round((comptesStatuts.retiree / termines) * 100) : 0;
 
   const topOffres = (() => {
     const counts = {};
@@ -329,7 +356,7 @@ export default function Dashboard() {
       const id = r.offre.id;
       if (!counts[id]) counts[id] = { titre: r.offre.titre, count: 0, revenu: 0 };
       counts[id].count++;
-      if (r.statut !== 'annulee') counts[id].revenu += r.prixPaye || 0;
+      if (estEncaissee(r)) counts[id].revenu += r.prixPaye || 0;
     });
     return Object.values(counts).sort((a, b) => b.count - a.count).slice(0, 5);
   })();
@@ -373,13 +400,17 @@ export default function Dashboard() {
   // -------------------------------------------------------
   // Exports
   // -------------------------------------------------------
-  const exporterPDF = () => {
+  const exporterPDF = async () => {
+    // Chargé à la demande : jsPDF pèse lourd et ne sert qu'à l'export
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'), import('jspdf-autotable'),
+    ]);
     const doc  = new jsPDF();
     const date = new Date().toLocaleDateString('fr-FR');
     doc.setFontSize(18); doc.setTextColor(27, 67, 50);
     doc.text('Take & Care — Réservations', 14, 20);
     doc.setFontSize(11); doc.setTextColor(100);
-    doc.text(`Pharmacie : ${pharmacien?.prenom} ${pharmacien?.nom}`, 14, 30);
+    doc.text(`Pharmacie : ${pharmacieData?.nom || `${pharmacien?.prenom} ${pharmacien?.nom}`}`, 14, 30);
     doc.text(`Exporté le : ${date}`, 14, 37);
     autoTable(doc, {
       startY: 45,
@@ -395,10 +426,10 @@ export default function Dashboard() {
       alternateRowStyles: { fillColor: [250, 247, 240] },
       styles: { fontSize: 10 },
     });
-    const total  = resasFiltrees.filter(r => r.statut !== 'annulee').reduce((s, r) => s + (r.prixPaye || 0), 0);
+    const total  = resasFiltrees.filter(estEncaissee).reduce((s, r) => s + (r.prixPaye || 0), 0);
     const finalY = doc.lastAutoTable.finalY + 8;
     doc.setFontSize(11); doc.setTextColor(27, 67, 50);
-    doc.text(`Total revenus (hors annulées) : ${total.toFixed(2)} €`, 14, finalY);
+    doc.text(`Total revenus (hors annulées et expirées non payées) : ${total.toFixed(2)} €`, 14, finalY);
     doc.save(`reservations-${new Date().toISOString().slice(0, 10)}.pdf`);
     notifier('Export PDF téléchargé.');
   };
@@ -429,8 +460,8 @@ export default function Dashboard() {
       <div className="tc-login-formulaire" style={{ minHeight: '100vh' }}>
         <div className="tc-modale" style={{ textAlign: 'center' }}>
           <div className="tc-modale-icone danger" style={{ margin: '0 auto 12px' }}><LienIcone size={22} /></div>
-          <h2 className="tc-modale-titre">Compte non lié à une pharmacie</h2>
-          <p className="tc-modale-texte">Contactez un administrateur pour associer votre compte.</p>
+          <h2 className="tc-modale-titre">Espace réservé aux pharmacies</h2>
+          <p className="tc-modale-texte">Ce compte est un compte client de l'application. Pour gérer une officine, crée un espace pharmacien avec une autre adresse email.</p>
           <button onClick={seDeconnecter} className="tc-btn tc-btn-primaire" style={{ marginTop: 20 }}>Se déconnecter</button>
         </div>
       </div>
@@ -455,10 +486,27 @@ export default function Dashboard() {
               <div>
                 <div className="tc-modale-icone"><ShoppingBag size={22} /></div>
                 <h2 className="tc-modale-titre">Valider un retrait</h2>
-                <p className="tc-modale-texte">Saisis le numéro affiché sous le QR code du client.</p>
+                <p className="tc-modale-texte">Scanne le QR code du client ou saisis le numéro affiché dessous.</p>
               </div>
               <button className="tc-fermer" onClick={fermerModalValidation} aria-label="Fermer"><X size={16} /></button>
             </div>
+
+            {scanActif ? (
+              <div style={{ marginBottom: 14 }}>
+                <ScannerQR onResultat={resultatScan} />
+                <button className="tc-btn tc-btn-fantome tc-btn-petit" onClick={() => setScanActif(false)} style={{ marginTop: 8 }}>
+                  Saisir le numéro à la place
+                </button>
+              </div>
+            ) : (
+              <button
+                className="tc-btn tc-btn-secondaire"
+                onClick={() => { setScanActif(true); setErreurRecherche(''); setResaTrouvee(null); }}
+                style={{ width: '100%', marginBottom: 12 }}
+              >
+                <ScanLine size={17} /> Scanner le QR code
+              </button>
+            )}
 
             <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
               <input
@@ -467,9 +515,9 @@ export default function Dashboard() {
                 value={numeroRecherche}
                 onChange={e => { setNumeroRecherche(e.target.value); setErreurRecherche(''); setResaTrouvee(null); }}
                 onKeyDown={e => e.key === 'Enter' && rechercherParNumero()}
-                autoFocus
+                autoFocus={!scanActif}
               />
-              <button className="tc-btn tc-btn-primaire" onClick={rechercherParNumero}>Rechercher</button>
+              <button className="tc-btn tc-btn-primaire" onClick={() => rechercherParNumero()}>Rechercher</button>
             </div>
 
             {erreurRecherche && <div className="tc-alerte erreur"><AlertTriangle size={16} /> {erreurRecherche}</div>}
@@ -533,6 +581,9 @@ export default function Dashboard() {
           ))}
           <div className="tc-nav-titre" style={{ marginTop: 14 }}>Compte</div>
           <LienNav item={ONGLET_REGLAGES} actif={onglet === 'reglages'} onClick={() => ouvrirReglages('profil')} />
+          {onAdministration && (
+            <LienNav item={{ label: 'Administration', icone: ShieldCheck }} actif={false} onClick={onAdministration} />
+          )}
         </nav>
 
         <div className="tc-profil">
@@ -559,7 +610,7 @@ export default function Dashboard() {
               </h1>
               <p className="tc-date">
                 {new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
-                {nbReserve > 0 && ` · ${nbReserve} panier${nbReserve > 1 ? 's' : ''} à retirer aujourd'hui`}
+                {nbReserve > 0 && ` · ${nbReserve} panier${nbReserve > 1 ? 's' : ''} à retirer`}
               </p>
             </div>
           </div>
@@ -583,6 +634,17 @@ export default function Dashboard() {
             <span>
               <strong>Pharmacie en attente de validation.</strong> Notre équipe vérifie ton officine :
               tu pourras publier des offres et recevoir des paiements dès qu'elle sera validée.
+            </span>
+          </div>
+        )}
+
+        {/* ── PAIEMENT EN LIGNE NON CONFIGURÉ ── */}
+        {pharmacien?.pharmacieValidee !== false && stripeStatut?.paiementsActifs && !stripeStatut.connecte && onglet !== 'paiements' && (
+          <div className="tc-alerte attention" style={{ marginBottom: 20 }}>
+            <CreditCard size={17} />
+            <span>
+              Tes clients ne peuvent pas encore réserver tes paniers : connecte ton compte bancaire dans{' '}
+              <button className="tc-btn tc-btn-fantome tc-btn-petit" style={{ padding: 0, textDecoration: 'underline' }} onClick={() => changerOnglet('paiements')}>Paiements</button>.
             </span>
           </div>
         )}
@@ -754,7 +816,7 @@ export default function Dashboard() {
                 <input placeholder="N°, offre ou client…" value={rechercheResa} onChange={e => setRechercheResa(e.target.value)} />
               </div>
               <div className="tc-segments" role="group" aria-label="Filtrer par statut">
-                {[['tous', 'Toutes'], ['confirmee', 'À retirer'], ['retiree', 'Retirées'], ['annulee', 'Annulées']].map(([v, l]) => (
+                {[['tous', 'Toutes'], ['confirmee', 'À retirer'], ['retiree', 'Retirées'], ['expiree', 'Expirées'], ['annulee', 'Annulées']].map(([v, l]) => (
                   <button key={v} className={`tc-segment ${filtreStatutResa === v ? 'actif' : ''}`} onClick={() => setFiltreStatutResa(v)}>
                     {l}{v !== 'tous' && <span style={{ opacity: 0.6 }}> {comptesStatuts[v]}</span>}
                   </button>
@@ -816,7 +878,7 @@ export default function Dashboard() {
                 </table>
                 <div className="tc-tableau-pied">
                   <span>{resasFiltrees.length} réservation{resasFiltrees.length > 1 ? 's' : ''}</span>
-                  <span>Total (hors annulées) : <strong>{formaterEuros(resasFiltrees.filter(r => r.statut !== 'annulee').reduce((s, r) => s + (r.prixPaye || 0), 0))}</strong></span>
+                  <span>Total encaissé : <strong>{formaterEuros(resasFiltrees.filter(estEncaissee).reduce((s, r) => s + (r.prixPaye || 0), 0))}</strong></span>
                 </div>
               </div>
             )}
@@ -885,15 +947,20 @@ export default function Dashboard() {
 
             <div className="tc-grille-3">
               <CarteStat icone={Wallet} valeur={formaterEuros(gainTotal)} label="Revenus bruts" detail="hors annulations" />
-              <CarteStat icone={Receipt} valeur={formaterEuros(gainTotal * (1 - COMMISSION))} label="Revenus nets" detail={`après commission ${COMMISSION * 100} %`} />
-              <CarteStat icone={Landmark} valeur={formaterEuros(gainTotal * COMMISSION)} label="Commission plateforme" detail={`${COMMISSION * 100} % par transaction`} />
+              <CarteStat icone={Receipt} valeur={formaterEuros(gainTotal - commissionTotale)} label="Revenus nets" detail="après commission" />
+              <CarteStat
+                icone={Landmark}
+                valeur={formaterEuros(commissionTotale)}
+                label="Commission plateforme"
+                detail={tauxCommission !== null ? `${Math.round(tauxCommission * 100)} % des paiements en ligne` : 'sur les paiements en ligne'}
+              />
             </div>
 
             <div className="tc-carte" style={{ padding: 0, overflow: 'hidden' }}>
               <div className="tc-carte-entete" style={{ padding: '20px 22px 0' }}>
                 <div>
                   <h3 className="tc-carte-titre">Historique des transactions</h3>
-                  <p className="tc-carte-sous-titre">20 dernières, hors annulations</p>
+                  <p className="tc-carte-sous-titre">20 dernières, hors annulations · les paniers payés en pharmacie n'ont pas de commission</p>
                 </div>
               </div>
               {valides.length === 0 ? (
@@ -921,8 +988,8 @@ export default function Dashboard() {
                             <td>{r.utilisateur?.prenom} {r.utilisateur?.nom}</td>
                             <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.offre?.titre}</td>
                             <td className="nombre">{formaterEuros(brut)}</td>
-                            <td className="nombre" style={{ color: 'var(--encre-3)' }}>−{formaterEuros(brut * COMMISSION)}</td>
-                            <td className="nombre" style={{ fontWeight: 800 }}>{formaterEuros(brut * (1 - COMMISSION))}</td>
+                            <td className="nombre" style={{ color: 'var(--encre-3)' }}>−{formaterEuros(commissionDe(r))}</td>
+                            <td className="nombre" style={{ fontWeight: 800 }}>{formaterEuros(brut - commissionDe(r))}</td>
                             <td><Pastille statut={r.statut} /></td>
                           </tr>
                         );
@@ -941,7 +1008,7 @@ export default function Dashboard() {
         {onglet === 'stats' && (
           <section className="tc-apparait">
             <div className="tc-grille-3">
-              <CarteStat icone={TrendingUp} valeur={`${tauxRecuperation} %`} label="Taux de récupération" detail="paniers retirés / non annulés" />
+              <CarteStat icone={TrendingUp} valeur={`${tauxRecuperation} %`} label="Taux de récupération" detail="paniers retirés / retirés + expirés" />
               <CarteStat icone={ShoppingBasket} valeur={formaterEuros(panierMoyen)} label="Panier moyen" detail="revenu moyen par réservation" />
               <CarteStat
                 icone={Star}

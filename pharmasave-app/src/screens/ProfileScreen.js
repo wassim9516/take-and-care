@@ -7,7 +7,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity,
   ActivityIndicator, Alert, Modal, TextInput,
   ScrollView, KeyboardAvoidingView, Platform, Linking,
-  Dimensions,
+  Dimensions, Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -15,7 +15,12 @@ import { useFocusEffect } from '@react-navigation/native';
 import QRCode from 'react-native-qrcode-svg';
 import { COLORS } from '../constants/colors';
 import { useAuth } from '../context/AuthContext';
-import { getMesReservations, annulerReservation, modifierMotDePasse, noterReservation } from '../api/client';
+import {
+  getMesReservations, annulerReservation, modifierMotDePasse, noterReservation,
+  demanderChangementTelephone, confirmerChangementTelephone, modifierNotifications,
+} from '../api/client';
+import { CONFIG, LIENS_LEGAUX } from '../config';
+import { erreurMotDePasse } from '../utils/validation';
 
 const { width: LARGEUR_ECRAN } = Dimensions.get('window');
 
@@ -23,13 +28,20 @@ const STATUTS = {
   confirmee: { label: 'Confirmée', couleur: COLORS.primaire },
   retiree:   { label: 'Retirée',   couleur: COLORS.secondaire },
   annulee:   { label: 'Annulée',   couleur: COLORS.danger },
+  expiree:   { label: 'Expirée',   couleur: COLORS.texteClair },
 };
+
+// Compare deux numéros en ignorant espaces, points et indicatif
+const chiffresTelephone = (t) => String(t || '').replace(/\D/g, '').replace(/^(33|0033)/, '0');
 
 const RAYONS_KM = [ 2, 5, 10, 20, 50];
 const CLE_RAYON = 'rayon_carte';
 
 export default function ProfileScreen() {
-  const { utilisateur, seDeconnecter, mettreAJourProfil } = useAuth();
+  const {
+    utilisateur, seDeconnecter, mettreAJourProfil, remplacerUtilisateur,
+    supprimerCompte, enregistrerPushToken,
+  } = useAuth();
 
   const [reservations, setReservations]         = useState([]);
   const [chargement, setChargement]             = useState(true);
@@ -49,6 +61,14 @@ export default function ProfileScreen() {
   const [ancienMdp, setAncienMdp]       = useState('');
   const [nouveauMdp, setNouveauMdp]     = useState('');
   const [sauvegarde, setSauvegarde]     = useState(false);
+  // Changement de téléphone : code SMS envoyé au nouveau numéro
+  const [codeTelephone, setCodeTelephone]     = useState('');
+  const [apercuTelephone, setApercuTelephone] = useState(null);
+
+  // Suppression du compte
+  const [modalSuppression, setModalSuppression] = useState(false);
+  const [mdpSuppression, setMdpSuppression]     = useState('');
+  const [suppressionEnCours, setSuppressionEnCours] = useState(false);
 
   // Charger le rayon sauvegardé
   useEffect(() => {
@@ -85,6 +105,8 @@ export default function ProfileScreen() {
     setTelephone(utilisateur?.telephone || '');
     setAncienMdp('');
     setNouveauMdp('');
+    setCodeTelephone('');
+    setApercuTelephone(null);
     setOngletModal('infos');
     setModalVisible(true);
   };
@@ -96,13 +118,63 @@ export default function ProfileScreen() {
     }
     setSauvegarde(true);
     try {
-      await mettreAJourProfil({ prenom: prenom.trim(), nom: nom.trim(), telephone: telephone.trim() });
+      await mettreAJourProfil({ prenom: prenom.trim(), nom: nom.trim() });
+      // Nouveau numéro : il doit être vérifié par SMS avant d'être enregistré
+      if (chiffresTelephone(telephone) !== chiffresTelephone(utilisateur?.telephone)) {
+        const resultat = await demanderChangementTelephone(telephone.trim());
+        setApercuTelephone(resultat.apercu);
+        setCodeTelephone('');
+        return;
+      }
       setModalVisible(false);
       Alert.alert('Profil mis à jour !');
-    } catch {
-      Alert.alert('Erreur', 'Impossible de mettre à jour le profil.');
+    } catch (err) {
+      Alert.alert('Erreur', err?.response?.data?.erreur || 'Impossible de mettre à jour le profil.');
     } finally {
       setSauvegarde(false);
+    }
+  };
+
+  const handleConfirmerTelephone = async () => {
+    if (!/^\d{6}$/.test(codeTelephone)) {
+      Alert.alert('Code incomplet', 'Saisis le code à 6 chiffres reçu par SMS.');
+      return;
+    }
+    setSauvegarde(true);
+    try {
+      const resultat = await confirmerChangementTelephone(telephone.trim(), codeTelephone);
+      remplacerUtilisateur(resultat.utilisateur);
+      setModalVisible(false);
+      Alert.alert('Numéro mis à jour !');
+    } catch (err) {
+      Alert.alert('Erreur', err?.response?.data?.erreur || 'Code incorrect ou expiré.');
+    } finally {
+      setSauvegarde(false);
+    }
+  };
+
+  const handleNotifications = async (actif) => {
+    try {
+      const resultat = await modifierNotifications(actif);
+      remplacerUtilisateur(resultat.utilisateur);
+      if (actif) enregistrerPushToken();
+    } catch (err) {
+      Alert.alert('Erreur', err?.response?.data?.erreur || 'Impossible d\'enregistrer ta préférence.');
+    }
+  };
+
+  const handleSupprimerCompte = async () => {
+    if (!mdpSuppression) {
+      Alert.alert('Mot de passe requis', 'Saisis ton mot de passe pour confirmer.');
+      return;
+    }
+    setSuppressionEnCours(true);
+    try {
+      await supprimerCompte(mdpSuppression);
+      // AuthContext déconnecte → retour à l'écran de connexion
+    } catch (err) {
+      Alert.alert('Suppression impossible', err?.response?.data?.erreur || 'Réessaie dans un instant.');
+      setSuppressionEnCours(false);
     }
   };
 
@@ -111,8 +183,9 @@ export default function ProfileScreen() {
       Alert.alert('Erreur', 'Remplis les deux champs.');
       return;
     }
-    if (nouveauMdp.length < 6) {
-      Alert.alert('Erreur', 'Le nouveau mot de passe doit faire au moins 6 caractères.');
+    const erreurMdp = erreurMotDePasse(nouveauMdp);
+    if (erreurMdp) {
+      Alert.alert('Mot de passe trop faible', erreurMdp);
       return;
     }
     setSauvegarde(true);
@@ -275,7 +348,19 @@ export default function ProfileScreen() {
               <View style={styles.formulaire}>
                 <ChampFormulaire label="Prénom" value={prenom} onChangeText={setPrenom} placeholder="Prénom" />
                 <ChampFormulaire label="Nom" value={nom} onChangeText={setNom} placeholder="Nom" />
-                <ChampFormulaire label="Téléphone" value={telephone} onChangeText={setTelephone} placeholder="+33 6 00 00 00 00" keyboardType="phone-pad" />
+                <ChampFormulaire label="Téléphone mobile" value={telephone} onChangeText={(v) => { setTelephone(v); setApercuTelephone(null); }} placeholder="06 12 34 56 78" keyboardType="phone-pad" />
+                {apercuTelephone && (
+                  <View style={styles.blocCodeTelephone}>
+                    <Text style={styles.noteEmail}>Code envoyé par SMS au {apercuTelephone}</Text>
+                    <ChampFormulaire
+                      label="Code de vérification"
+                      value={codeTelephone}
+                      onChangeText={(v) => setCodeTelephone(v.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="123456"
+                      keyboardType="number-pad"
+                    />
+                  </View>
+                )}
 
                 <View style={styles.champLecture}>
                   <Text style={styles.labelChamp}>Email</Text>
@@ -285,20 +370,22 @@ export default function ProfileScreen() {
 
                 <TouchableOpacity
                   style={styles.boutonSauvegarder}
-                  onPress={handleSauvegarderInfos}
+                  onPress={apercuTelephone ? handleConfirmerTelephone : handleSauvegarderInfos}
                   disabled={sauvegarde}
                 >
                   {sauvegarde
                     ? <ActivityIndicator color={COLORS.blanc} />
-                    : <Text style={styles.texteBoutonModal}>Sauvegarder les modifications</Text>
+                    : <Text style={styles.texteBoutonModal}>
+                        {apercuTelephone ? 'Confirmer le nouveau numéro' : 'Sauvegarder les modifications'}
+                      </Text>
                   }
                 </TouchableOpacity>
               </View>
             ) : (
               <View style={styles.formulaire}>
                 <ChampFormulaire label="Mot de passe actuel" value={ancienMdp} onChangeText={setAncienMdp} placeholder="••••••" secureTextEntry />
-                <ChampFormulaire label="Nouveau mot de passe" value={nouveauMdp} onChangeText={setNouveauMdp} placeholder="6 caractères minimum" secureTextEntry />
-                <Text style={styles.noteEmail}>Le nouveau mot de passe doit faire au moins 6 caractères.</Text>
+                <ChampFormulaire label="Nouveau mot de passe" value={nouveauMdp} onChangeText={setNouveauMdp} placeholder="8 caractères minimum" secureTextEntry />
+                <Text style={styles.noteEmail}>Au moins 8 caractères, dont une lettre et un chiffre. Tes autres appareils seront déconnectés.</Text>
                 <TouchableOpacity
                   style={styles.boutonSauvegarder}
                   onPress={handleChangerMdp}
@@ -312,6 +399,47 @@ export default function ProfileScreen() {
               </View>
             )}
           </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ══════════ MODAL SUPPRESSION DU COMPTE ══════════ */}
+      <Modal
+        visible={modalSuppression}
+        animationType="fade"
+        transparent
+        onRequestClose={() => !suppressionEnCours && setModalSuppression(false)}
+      >
+        <KeyboardAvoidingView style={styles.qrOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={styles.carteSuppression}>
+            <Text style={styles.titreSuppression}>Supprimer ton compte ?</Text>
+            <Text style={styles.texteSuppression}>
+              Tes informations personnelles seront effacées définitivement. Tes réservations en cours seront
+              annulées et remboursées si tu les as payées. Cette action est irréversible.
+            </Text>
+            <ChampFormulaire
+              label="Mot de passe"
+              value={mdpSuppression}
+              onChangeText={setMdpSuppression}
+              placeholder="Confirme avec ton mot de passe"
+              secureTextEntry
+            />
+            <TouchableOpacity
+              style={[styles.boutonSupprimer, suppressionEnCours && { opacity: 0.6 }]}
+              onPress={handleSupprimerCompte}
+              disabled={suppressionEnCours}
+            >
+              {suppressionEnCours
+                ? <ActivityIndicator color="#fff" />
+                : <Text style={styles.texteBoutonModal}>Supprimer définitivement</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.boutonAnnulerSuppression}
+              onPress={() => setModalSuppression(false)}
+              disabled={suppressionEnCours}
+            >
+              <Text style={styles.texteAnnulerSuppression}>Annuler</Text>
+            </TouchableOpacity>
+          </View>
         </KeyboardAvoidingView>
       </Modal>
 
@@ -410,6 +538,26 @@ export default function ProfileScreen() {
           </View>
         </View>
 
+        {/* ── SECTION NOTIFICATIONS ── */}
+        <TitreSection icone="notifications-outline" label="Notifications" />
+
+        <View style={styles.groupeSection}>
+          <View style={styles.ligneParametre}>
+            <View style={styles.iconeParametre}>
+              <Ionicons name="pricetags-outline" size={18} color={COLORS.primaire} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.labelParametre}>Nouvelles offres près de moi</Text>
+              <Text style={styles.detailParametre}>Une notification quand une pharmacie proche publie un panier</Text>
+            </View>
+            <Switch
+              value={!!utilisateur?.notifOffres}
+              onValueChange={handleNotifications}
+              trackColor={{ true: COLORS.primaire }}
+            />
+          </View>
+        </View>
+
         {/* ── SECTION AIDE & SUPPORT ── */}
         <TitreSection icone="help-circle-outline" label="Aide & Support" />
 
@@ -417,17 +565,23 @@ export default function ProfileScreen() {
           <LigneAction
             icone="mail-outline"
             label="Contacter le support"
-            detail="support@takendcare.com"
-            onPress={() => Linking.openURL('mailto:support@takendcare.com?subject=Support Take%26Care')}
+            detail={CONFIG.SUPPORT_EMAIL}
+            onPress={() => Linking.openURL(`mailto:${CONFIG.SUPPORT_EMAIL}?subject=Support%20Take%20%26%20Care`)}
             chevron
           />
           <View style={styles.separateurLigne} />
           <LigneAction
-            icone="chatbubble-ellipses-outline"
-            label="Assistant IA"
-            detail="Pose-nous toutes tes questions"
-            badge=""
-            disabled
+            icone="document-text-outline"
+            label="Conditions générales"
+            onPress={() => Linking.openURL(LIENS_LEGAUX.cgu)}
+            chevron
+          />
+          <View style={styles.separateurLigne} />
+          <LigneAction
+            icone="shield-checkmark-outline"
+            label="Politique de confidentialité"
+            onPress={() => Linking.openURL(LIENS_LEGAUX.confidentialite)}
+            chevron
           />
         </View>
 
@@ -459,6 +613,13 @@ export default function ProfileScreen() {
                 { text: 'Déconnecter', style: 'destructive', onPress: seDeconnecter },
               ])
             }
+          />
+          <View style={styles.separateurLigne} />
+          <LigneAction
+            icone="trash-outline"
+            label="Supprimer mon compte"
+            couleur={COLORS.danger}
+            onPress={() => { setMdpSuppression(''); setModalSuppression(true); }}
           />
         </View>
 
@@ -497,7 +658,7 @@ function LigneAction({ icone, label, detail, onPress, chevron, badge, couleur, d
         <Text style={[styles.labelParametre, couleur && { color: couleur }]}>{label}</Text>
         {detail ? <Text style={styles.detailParametre}>{detail}</Text> : null}
       </View>
-      {badge && (
+      {!!badge && (
         <View style={styles.badgeBientot}>
           <Text style={styles.texteBadgeBientot}>{badge}</Text>
         </View>
@@ -530,9 +691,14 @@ function CarteReservation({ item, onAnnuler, onVoirQR, onNoter }) {
       <View style={styles.ligneInfosResa}>
         <View style={{ flex: 1 }}>
           <Text style={styles.numero}>N° {item.numero}</Text>
-          <Text style={styles.prix}>{(item.prixPaye ?? 0).toFixed(2)} €</Text>
-          {item.offre?.heureRetrait && (
+          <Text style={styles.prix}>{Number(item.prixPaye ?? 0).toFixed(2)} €</Text>
+          {estConfirmee && !!item.offre?.heureRetrait && (
             <Text style={styles.heureRetrait}>⏰ Retrait : {item.offre.heureRetrait}</Text>
+          )}
+          {estConfirmee && !!item.expireLe && (
+            <Text style={styles.heureRetrait}>
+              ⌛ À retirer avant le {new Date(item.expireLe).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+            </Text>
           )}
         </View>
 
@@ -626,6 +792,17 @@ function ChampFormulaire({ label, value, onChangeText, placeholder, keyboardType
 // Styles
 // -------------------------------------------------------
 const styles = StyleSheet.create({
+  blocCodeTelephone: { gap: 6 },
+  carteSuppression: {
+    backgroundColor: '#fff', borderRadius: 20, padding: 22, width: '88%', gap: 12,
+  },
+  titreSuppression: { fontSize: 19, fontWeight: '800', color: COLORS.danger },
+  texteSuppression: { fontSize: 14, lineHeight: 20, color: COLORS.texte },
+  boutonSupprimer: {
+    backgroundColor: COLORS.danger, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 4,
+  },
+  boutonAnnulerSuppression: { alignItems: 'center', paddingVertical: 8 },
+  texteAnnulerSuppression: { color: COLORS.texteClair, fontWeight: '600', fontSize: 15 },
   conteneur: {
     flex: 1,
     backgroundColor: '#F0F4F0',

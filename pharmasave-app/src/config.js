@@ -1,23 +1,28 @@
 // ============================================================
 // src/config.js — Configuration globale de l'application
 // ============================================================
-// ⚠️  IMPORTANT : Change l'adresse IP ci-dessous !
+// Les valeurs viennent des variables d'environnement EXPO_PUBLIC_*
+// (fichier .env en local, eas.json pour les builds des stores).
 //
-// Pour trouver ton IP locale sur Mac :
-//   1. Ouvre un Terminal
-//   2. Tape : ifconfig | grep "inet 192"
-//   3. Tu verras quelque chose comme "inet 192.168.1.XX"
-//   4. Remplace "192.168.1.XX" par cette adresse
-//
-// L'iPhone et le Mac doivent être sur le même réseau WiFi !
+// En développement avec Expo Go, crée pharmasave-app/.env :
+//   EXPO_PUBLIC_API_URL=http://192.168.1.XX:3000/api
+// (IP du Mac : ifconfig | grep "inet 192" — l'iPhone et le Mac
+// doivent être sur le même réseau Wi-Fi)
 // ============================================================
 
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.86:3000/api';
+
 export const CONFIG = {
-  API_URL: 'http://192.168.1.86:3000/api',
-  RAYON_RECHERCHE: 5,
-  // Clé publique Stripe (commence par pk_test_ ou pk_live_)
-  // Récupère-la sur https://dashboard.stripe.com/apikeys
-  // ⚠️  Laisser vide ('') pour tester dans Expo Go (Stripe nécessite un Dev Build)
-  // ⚠️  Remettre la clé pour un vrai build (EAS Build / expo prebuild)
-  STRIPE_PUBLISHABLE_KEY: '',
+  API_URL,
+  // Racine du serveur (pages légales…)
+  SERVEUR_URL: API_URL.replace(/\/api\/?$/, ''),
+  // Clé publique Stripe (pk_test_… ou pk_live_). Vide = réservation sans
+  // paiement en ligne (obligatoire dans Expo Go : Stripe nécessite un build EAS)
+  STRIPE_PUBLISHABLE_KEY: process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY || '',
+  SUPPORT_EMAIL: process.env.EXPO_PUBLIC_SUPPORT_EMAIL || 'support@takeandcare.fr',
+};
+
+export const LIENS_LEGAUX = {
+  cgu:             `${CONFIG.SERVEUR_URL}/legal/cgu`,
+  confidentialite: `${CONFIG.SERVEUR_URL}/legal/confidentialite`,
 };

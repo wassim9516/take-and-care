@@ -7,6 +7,30 @@
 
 const { DataTypes } = require('sequelize');
 const sequelize = require('./connection');
+const { versStockage, versPublic } = require('../utils/images');
+
+// Montant en euros stocké en NUMERIC(10,2) (pas d'erreurs d'arrondi des
+// FLOAT). PostgreSQL renvoie les NUMERIC sous forme de texte : le getter
+// les reconvertit en nombre pour l'API.
+function champMontant(nom, options = {}) {
+  return {
+    type: DataTypes.DECIMAL(10, 2),
+    ...options,
+    get() {
+      const v = this.getDataValue(nom);
+      return v === null || v === undefined ? v : parseFloat(v);
+    },
+  };
+}
+
+// Image : chemin relatif en base, URL complète à la lecture (utils/images.js)
+function champImage(nom) {
+  return {
+    type: DataTypes.STRING,
+    get() { return versPublic(this.getDataValue(nom)); },
+    set(valeur) { this.setDataValue(nom, versStockage(valeur)); },
+  };
+}
 
 // -------------------------------------------------------
 // TABLE : utilisateurs
@@ -48,6 +72,22 @@ const Utilisateur = sequelize.define('Utilisateur', {
     type: DataTypes.STRING,
     allowNull: true,
   },
+  // Notifications « nouvelle offre près de chez toi » (désactivables)
+  notifOffres: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
+  },
+  // Position approximative (arrondie à ~1 km) envoyée par l'app avec le
+  // push token, utilisée uniquement pour cibler les notifications
+  notifLat: { type: DataTypes.FLOAT, allowNull: true },
+  notifLng: { type: DataTypes.FLOAT, allowNull: true },
+  // Administrateur Take & Care (validation des pharmacies) :
+  // npm run admin -- <email>
+  estAdmin: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  // Date de suppression du compte (les données personnelles sont alors
+  // anonymisées ; la ligne reste pour l'historique des réservations)
+  supprimeLe: { type: DataTypes.DATE, allowNull: true },
   // Lien optionnel vers une pharmacie (null = client normal, valeur = pharmacien)
   pharmacieId: {
     type: DataTypes.INTEGER,
@@ -90,9 +130,7 @@ const Pharmacie = sequelize.define('Pharmacie', {
     type: DataTypes.FLOAT,
     allowNull: false,
   },
-  image: {
-    type: DataTypes.STRING,
-  },
+  image: champImage('image'),
   horaires: {
     type: DataTypes.STRING,
   },
@@ -137,14 +175,8 @@ const Offre = sequelize.define('Offre', {
     type: DataTypes.JSON,
     defaultValue: [],
   },
-  prixOriginal: {
-    type: DataTypes.FLOAT,
-    allowNull: false,
-  },
-  prixReduit: {
-    type: DataTypes.FLOAT,
-    allowNull: false,
-  },
+  prixOriginal: champMontant('prixOriginal', { allowNull: false }),
+  prixReduit:   champMontant('prixReduit',   { allowNull: false }),
   quantiteDisponible: {
     type: DataTypes.INTEGER,
     defaultValue: 1,
@@ -155,9 +187,7 @@ const Offre = sequelize.define('Offre', {
   categorie: {
     type: DataTypes.STRING,
   },
-  image: {
-    type: DataTypes.STRING,
-  },
+  image: champImage('image'),
   heureRetrait: {
     type: DataTypes.STRING,
   },
@@ -193,22 +223,29 @@ const Reservation = sequelize.define('Reservation', {
     defaultValue: null,
     validate: { min: 1, max: 5 },
   },
+  // expiree = non retirée avant expireLe (voir utils/reservations.js)
   statut: {
-    type: DataTypes.ENUM('confirmee', 'retiree', 'annulee'),
+    type: DataTypes.ENUM('confirmee', 'retiree', 'annulee', 'expiree'),
     defaultValue: 'confirmee',
   },
-  prixPaye: {
-    type: DataTypes.FLOAT,
+  // Date limite de retrait
+  expireLe: {
+    type: DataTypes.DATE,
+    allowNull: true,
   },
+  // Rappel « pense à retirer ton panier » déjà envoyé
+  rappelEnvoye: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
+  prixPaye: champMontant('prixPaye'),
   stripePaymentIntentId: {
     type: DataTypes.STRING,
     allowNull: true,
     unique: true,
   },
-  commission: {
-    type: DataTypes.FLOAT,
-    allowNull: true,
-  },
+  commission: champMontant('commission', { allowNull: true }),
   // Clés étrangères
   utilisateurId: {
     type: DataTypes.INTEGER,
@@ -245,6 +282,36 @@ const Favori = sequelize.define('Favori', {
 });
 
 // -------------------------------------------------------
+// TABLE : codes_verification
+// -------------------------------------------------------
+// Codes envoyés par SMS ou email (inscription, changement de téléphone,
+// mot de passe oublié). En base et non en mémoire : ils survivent à un
+// redémarrage et fonctionnent avec plusieurs instances du serveur.
+// Un code n'est jamais stocké en clair (hash SHA-256).
+const CodeVerification = sequelize.define('CodeVerification', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true,
+  },
+  // 'inscription' | 'telephone' | 'reinitialisation'
+  type:     { type: DataTypes.STRING, allowNull: false },
+  // Téléphone normalisé ou email selon le type
+  cle:      { type: DataTypes.STRING, allowNull: false },
+  codeHash: { type: DataTypes.STRING, allowNull: false },
+  essais:   { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+  expireAt: { type: DataTypes.DATE, allowNull: false },
+  // Données à appliquer une fois le code vérifié (ex. compte à créer)
+  donnees:  { type: DataTypes.JSON, allowNull: true },
+  // Limite d'envois : 3 par fenêtre de 10 minutes
+  envois:       { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+  fenetreDebut: { type: DataTypes.DATE, allowNull: false },
+}, {
+  tableName: 'codes_verification',
+  indexes: [{ fields: ['type', 'cle'], unique: true }],
+});
+
+// -------------------------------------------------------
 // RELATIONS entre les tables
 // -------------------------------------------------------
 // Une pharmacie a plusieurs offres
@@ -256,12 +323,16 @@ Utilisateur.belongsTo(Pharmacie, { foreignKey: 'pharmacieId', as: 'pharmacie' })
 Pharmacie.hasMany(Utilisateur, { foreignKey: 'pharmacieId', as: 'pharmaciens' });
 
 // Un utilisateur a plusieurs réservations
-Utilisateur.hasMany(Reservation, { foreignKey: 'utilisateurId', as: 'reservations' });
-Reservation.belongsTo(Utilisateur, { foreignKey: 'utilisateurId', as: 'utilisateur' });
+// RESTRICT : une réservation (éventuellement payée) ne doit jamais être
+// effacée en cascade. Un compte supprimé est anonymisé, pas effacé.
+Utilisateur.hasMany(Reservation, { foreignKey: 'utilisateurId', as: 'reservations', onDelete: 'RESTRICT' });
+Reservation.belongsTo(Utilisateur, { foreignKey: 'utilisateurId', as: 'utilisateur', onDelete: 'RESTRICT' });
 
 // Une offre a plusieurs réservations
-Offre.hasMany(Reservation, { foreignKey: 'offreId', as: 'reservations' });
-Reservation.belongsTo(Offre, { foreignKey: 'offreId', as: 'offre' });
+// RESTRICT : impossible de supprimer une offre qui a des réservations
+// (le dashboard propose alors de la masquer)
+Offre.hasMany(Reservation, { foreignKey: 'offreId', as: 'reservations', onDelete: 'RESTRICT' });
+Reservation.belongsTo(Offre, { foreignKey: 'offreId', as: 'offre', onDelete: 'RESTRICT' });
 
 // Un utilisateur a plusieurs favoris
 Utilisateur.hasMany(Favori, { foreignKey: 'utilisateurId', as: 'favoris' });
@@ -271,4 +342,4 @@ Favori.belongsTo(Utilisateur, { foreignKey: 'utilisateurId', as: 'utilisateur' }
 Offre.hasMany(Favori, { foreignKey: 'offreId', as: 'favoris' });
 Favori.belongsTo(Offre, { foreignKey: 'offreId', as: 'offre' });
 
-module.exports = { Utilisateur, Pharmacie, Offre, Reservation, Favori, PHARMACIE_CHAMPS_PRIVES };
+module.exports = { Utilisateur, Pharmacie, Offre, Reservation, Favori, CodeVerification, PHARMACIE_CHAMPS_PRIVES };

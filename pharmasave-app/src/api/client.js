@@ -46,6 +46,11 @@ export const demanderVerification = async (prenom, nom, email, motDePasse, telep
   return response.data;
 };
 
+export const renvoyerCode = async (telephone) => {
+  const response = await api.post('/auth/renvoyer-code', { telephone });
+  return response.data;
+};
+
 export const confirmerInscription = async (telephone, code) => {
   const response = await api.post('/auth/confirmer-inscription', { telephone, code });
   return response.data;
@@ -73,12 +78,46 @@ export const modifierMotDePasse = async (ancienMotDePasse, nouveauMotDePasse) =>
   return response.data;
 };
 
+export const demanderReinitialisation = async (email) => {
+  const response = await api.post('/auth/mot-de-passe-oublie', { email });
+  return response.data;
+};
+
+export const reinitialiserMotDePasse = async (email, code, nouveauMotDePasse) => {
+  const response = await api.post('/auth/reinitialiser-mot-de-passe', { email, code, nouveauMotDePasse });
+  return response.data;
+};
+
+export const demanderChangementTelephone = async (telephone) => {
+  const response = await api.post('/auth/telephone/demander', { telephone });
+  return response.data; // { apercu }
+};
+
+export const confirmerChangementTelephone = async (telephone, code) => {
+  const response = await api.post('/auth/telephone/confirmer', { telephone, code });
+  return response.data; // { utilisateur }
+};
+
+export const modifierNotifications = async (notifOffres) => {
+  const response = await api.put('/auth/notifications', { notifOffres });
+  return response.data; // { utilisateur }
+};
+
+export const supprimerCompte = async (motDePasse) => {
+  const response = await api.delete('/auth/compte', { data: { motDePasse } });
+  return response.data;
+};
+
 // -------------------------------------------------------
 // OFFRES
 // -------------------------------------------------------
 
-export const getOffres = async (categorie = null, offset = 0, limite = 20) => {
-  const params = { limite, offset, ...(categorie ? { categorie } : {}) };
+// filtres : { categorie, recherche, prixMax, pharmacieId, tri, lat, lng }
+export const getOffres = async (filtres = {}, offset = 0, limite = 20) => {
+  const params = { limite, offset };
+  Object.entries(filtres).forEach(([cle, valeur]) => {
+    if (valeur !== null && valeur !== undefined && valeur !== '') params[cle] = valeur;
+  });
   const response = await api.get('/offers', { params });
   return response.data; // { offres, total, hasMore }
 };
@@ -136,8 +175,14 @@ export const noterReservation = async (id, note) => {
   return response.data;
 };
 
-export const savePushToken = async (pushToken) => {
-  const response = await api.put('/auth/push-token', { pushToken });
+// position facultative : { latitude, longitude } (arrondie côté serveur)
+export const savePushToken = async (pushToken, position = null) => {
+  const response = await api.put('/auth/push-token', { pushToken, ...(position || {}) });
+  return response.data;
+};
+
+export const supprimerPushToken = async () => {
+  const response = await api.delete('/auth/push-token');
   return response.data;
 };
 

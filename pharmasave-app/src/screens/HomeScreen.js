@@ -58,75 +58,106 @@ export default function HomeScreen({ navigation, route }) {
   const [rafraichissement, setRafraichissement]     = useState(false);
   const [categorieActive, setCategorieActive]       = useState(null);
   const [recherche, setRecherche]                   = useState('');
-  const [filtrePharmacieNom, setFiltrePharmacieNom] = useState(null);
+  const [rechercheEnvoyee, setRechercheEnvoyee]     = useState('');
+  const [filtrePharmacie, setFiltrePharmacie]       = useState(null); // { id, nom }
   const [tri, setTri]                               = useState('recent');
   const [maxPrix, setMaxPrix]                       = useState(null);
   const [position, setPosition]                     = useState(null);
   const [hasMore, setHasMore]                       = useState(false);
+  const [total, setTotal]                           = useState(0);
   const [horsLigne, setHorsLigne]                   = useState(false);
   const offsetRef                                   = useRef(0);
+  const requeteRef                                  = useRef(0); // ignore les réponses périmées
   const LIMITE                                      = 20;
 
   // Récupère la dernière position connue (silencieux, pas de prompt)
   useEffect(() => {
-    Location.getLastKnownPositionAsync().then(loc => {
-      if (loc?.coords) setPosition(loc.coords);
-    }).catch(() => {});
+    Location.getForegroundPermissionsAsync()
+      .then(({ status }) => status === 'granted' ? Location.getLastKnownPositionAsync() : null)
+      .then(loc => { if (loc?.coords) setPosition(loc.coords); })
+      .catch(() => {});
   }, []);
+
+  // La recherche part 400 ms après la dernière frappe
+  useEffect(() => {
+    const t = setTimeout(() => setRechercheEnvoyee(recherche.trim()), 400);
+    return () => clearTimeout(t);
+  }, [recherche]);
 
   // Si l'utilisateur veut trier par distance et qu'on n'a pas la position, on demande
   const handleTri = async (id) => {
     if (id === 'distance' && !position) {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({});
-        if (loc?.coords) setPosition(loc.coords);
-      } else {
-        Alert.alert('Permission refusée', 'Active la localisation pour trier par distance.');
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission refusée', 'Active la localisation pour trier par distance.');
+          return;
+        }
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (!loc?.coords) throw new Error();
+        setPosition(loc.coords);
+      } catch {
+        Alert.alert('Localisation', 'Impossible d\'obtenir ta position.');
         return;
       }
     }
     setTri(id);
   };
 
-  // Filtre pharmacie depuis la carte
+  // Filtre pharmacie depuis la carte ou la fiche pharmacie
   useEffect(() => {
-    if (route.params?.pharmacieNom) {
-      setFiltrePharmacieNom(route.params.pharmacieNom);
+    if (route.params?.pharmacieId) {
+      setFiltrePharmacie({ id: route.params.pharmacieId, nom: route.params.pharmacieNom });
     }
-  }, [route.params?.pharmacieNom]);
+  }, [route.params?.pharmacieId, route.params?.pharmacieNom]);
+
+  // Tous les filtres sont appliqués par le serveur (sur toutes les offres,
+  // pas seulement celles déjà chargées)
+  const filtres = useMemo(() => ({
+    categorie:   categorieActive,
+    recherche:   rechercheEnvoyee,
+    prixMax:     maxPrix,
+    pharmacieId: filtrePharmacie?.id,
+    tri,
+    ...(tri === 'distance' && position ? { lat: position.latitude, lng: position.longitude } : {}),
+  }), [categorieActive, rechercheEnvoyee, maxPrix, filtrePharmacie, tri, position]);
+
+  const sansFiltre = !categorieActive && !rechercheEnvoyee && maxPrix === null && !filtrePharmacie && tri === 'recent';
 
   const chargerOffres = useCallback(async (offset = 0) => {
+    const numero = ++requeteRef.current;
     try {
-      const data = await getOffres(categorieActive, offset, LIMITE);
-      const nouvelles = data.offres ?? data;
+      const data = await getOffres(filtres, offset, LIMITE);
+      if (numero !== requeteRef.current) return;
+      const nouvelles = data.offres ?? [];
       if (offset === 0) {
         setOffres(nouvelles);
-        await AsyncStorage.setItem('cache_offres', JSON.stringify(nouvelles));
+        if (sansFiltre) AsyncStorage.setItem('cache_offres', JSON.stringify(nouvelles)).catch(() => {});
       } else {
         setOffres(prev => [...prev, ...nouvelles]);
       }
       setHasMore(data.hasMore ?? false);
+      setTotal(data.total ?? nouvelles.length);
       setHorsLigne(false);
-    } catch {
+    } catch (err) {
+      if (numero !== requeteRef.current) return;
       if (offset === 0) {
-        const cache = await AsyncStorage.getItem('cache_offres');
+        const cache = !err?.response && sansFiltre ? await AsyncStorage.getItem('cache_offres').catch(() => null) : null;
         if (cache) {
           setOffres(JSON.parse(cache));
           setHorsLigne(true);
         } else {
-          Alert.alert(
-            'Connexion impossible',
-            "Vérifie que le serveur backend est lancé et que l'IP dans config.js est correcte."
-          );
+          Alert.alert('Connexion impossible', err?.response?.data?.erreur || 'Vérifie ta connexion internet et réessaie.');
         }
       }
     } finally {
-      setChargement(false);
-      setRafraichissement(false);
-      setChargementPlus(false);
+      if (numero === requeteRef.current) {
+        setChargement(false);
+        setRafraichissement(false);
+        setChargementPlus(false);
+      }
     }
-  }, [categorieActive]);
+  }, [filtres, sansFiltre]);
 
   useEffect(() => {
     offsetRef.current = 0;
@@ -142,45 +173,18 @@ export default function HomeScreen({ navigation, route }) {
   };
 
   const chargerPlus = () => {
-    if (chargementPlus || !hasMore) return;
+    if (chargementPlus || !hasMore || chargement) return;
     const nouvelOffset = offsetRef.current + LIMITE;
     offsetRef.current = nouvelOffset;
     setChargementPlus(true);
     chargerOffres(nouvelOffset);
   };
 
-  // -------------------------------------------------------
-  // Filtrage + tri — mémoïsé pour éviter les recalculs inutiles
-  // -------------------------------------------------------
-  const offresFiltrees = useMemo(() => {
-    return offres
-      .filter(o => {
-        if (filtrePharmacieNom && (o.pharmacieNom || '') !== filtrePharmacieNom) return false;
-        if (maxPrix !== null && o.prixReduit > maxPrix) return false;
-        if (!recherche.trim()) return true;
-        const terme = recherche.toLowerCase();
-        return (
-          o.titre.toLowerCase().includes(terme) ||
-          (o.pharmacieNom || '').toLowerCase().includes(terme)
-        );
-      })
-      .map(o => ({
-        ...o,
-        distance: calculerDistance(
-          position?.latitude, position?.longitude,
-          o.pharmacieLat, o.pharmacieLng
-        ),
-      }))
-      .sort((a, b) => {
-        if (tri === 'prix')     return a.prixReduit - b.prixReduit;
-        if (tri === 'distance') {
-          if (a.distance === null) return 1;
-          if (b.distance === null) return -1;
-          return a.distance - b.distance;
-        }
-        return 0; // 'recent' : déjà trié par le backend
-      });
-  }, [offres, filtrePharmacieNom, maxPrix, recherche, position, tri]);
+  // Distance affichée sur chaque carte (calcul local)
+  const offresAffichees = useMemo(() => offres.map(o => ({
+    ...o,
+    distance: calculerDistance(position?.latitude, position?.longitude, o.pharmacieLat, o.pharmacieLng),
+  })), [offres, position]);
 
   const renderOffre = ({ item }) => (
     <OfferCard
@@ -290,11 +294,11 @@ export default function HomeScreen({ navigation, route }) {
       </View>
 
       {/* ---- BADGE FILTRE PHARMACIE ---- */}
-      {filtrePharmacieNom && (
+      {filtrePharmacie && (
         <View style={styles.badgePharmacieConteneur}>
           <Ionicons name="storefront-outline" size={14} color={COLORS.primaire} />
-          <Text style={styles.badgePharmacieTexte} numberOfLines={1}>{filtrePharmacieNom}</Text>
-          <TouchableOpacity onPress={() => setFiltrePharmacieNom(null)}>
+          <Text style={styles.badgePharmacieTexte} numberOfLines={1}>{filtrePharmacie.nom}</Text>
+          <TouchableOpacity onPress={() => { setFiltrePharmacie(null); navigation.setParams({ pharmacieId: undefined, pharmacieNom: undefined }); }}>
             <Ionicons name="close-circle" size={16} color={COLORS.primaire} />
           </TouchableOpacity>
         </View>
@@ -311,7 +315,7 @@ export default function HomeScreen({ navigation, route }) {
       {/* ---- COMPTEUR ---- */}
       {!chargement && (
         <Text style={styles.compteur}>
-          {offresFiltrees.length} offre{offresFiltrees.length !== 1 ? 's' : ''}
+          {total} offre{total !== 1 ? 's' : ''}
           {tri === 'distance' && position ? ' · triées par distance' : ''}
           {tri === 'prix' ? ' · triées par prix' : ''}
         </Text>
@@ -322,7 +326,7 @@ export default function HomeScreen({ navigation, route }) {
         <View style={styles.centrer}>
           <ActivityIndicator size="large" color={COLORS.primaire} />
         </View>
-      ) : offresFiltrees.length === 0 ? (
+      ) : offresAffichees.length === 0 ? (
         <View style={styles.centrer}>
           <Ionicons name="leaf-outline" size={48} color={COLORS.bordure} />
           <Text style={styles.texteVide}>Aucune offre trouvée</Text>
@@ -330,7 +334,7 @@ export default function HomeScreen({ navigation, route }) {
         </View>
       ) : (
         <FlatList
-          data={offresFiltrees}
+          data={offresAffichees}
           keyExtractor={(item) => String(item.id)}
           renderItem={renderOffre}
           contentContainerStyle={styles.listeOffres}

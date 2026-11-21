@@ -6,7 +6,8 @@ const express        = require('express');
 const router         = express.Router();
 const authMiddleware = require('../middleware/auth');
 const { Pharmacie, Offre, PHARMACIE_CHAMPS_PRIVES } = require('../database/models');
-const { validerImage } = require('../utils/images');
+const { validerImage, supprimerImage, memeImage } = require('../utils/images');
+const { whereOffreDisponible } = require('./offers');
 
 // Champs internes jamais renvoyés dans les routes publiques
 const ATTRIBUTS_PUBLICS = { exclude: [...PHARMACIE_CHAMPS_PRIVES, 'valide'] };
@@ -77,7 +78,8 @@ router.get('/:id', async (req, res) => {
   try {
     const pharmacie = await Pharmacie.findByPk(id, {
       attributes: { exclude: PHARMACIE_CHAMPS_PRIVES },
-      include: [{ model: Offre, as: 'offres', where: { actif: true }, required: false }],
+      include: [{ model: Offre, as: 'offres', where: whereOffreDisponible(), required: false }],
+      order: [[{ model: Offre, as: 'offres' }, 'createdAt', 'DESC']],
     });
 
     if (!pharmacie) return res.status(404).json({ erreur: 'Pharmacie introuvable.' });
@@ -127,11 +129,17 @@ router.put('/:id', authMiddleware, async (req, res) => {
     const imageValidee = validerImage(image, pharmacie.image, pharmacieId);
     if (!imageValidee.ok) return res.status(400).json({ erreur: 'Image invalide.' });
 
+    const ancienneImage = pharmacie.image;
     await pharmacie.update({
-      nom: nom.trim(), adresse: adresse.trim(), telephone, horaires,
+      nom: nom.trim(), adresse: adresse.trim(),
+      telephone: typeof telephone === 'string' ? telephone.trim() : telephone,
+      horaires,
       ...coordonnees,
       ...(imageValidee.valeur !== undefined ? { image: imageValidee.valeur } : {}),
     });
+    if (imageValidee.valeur !== undefined && ancienneImage && !memeImage(imageValidee.valeur, ancienneImage)) {
+      supprimerImage(ancienneImage, pharmacieId);
+    }
 
     const { stripeAccountId, ...pharmaciePublique } = pharmacie.toJSON();
     res.json({ message: 'Pharmacie mise à jour.', pharmacie: pharmaciePublique });

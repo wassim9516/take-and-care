@@ -5,11 +5,16 @@
 const express        = require('express');
 const router         = express.Router();
 const { Op }         = require('sequelize');
-const { Offre, Pharmacie, Utilisateur, PHARMACIE_CHAMPS_PRIVES } = require('../database/models');
+const sequelize      = require('../database/connection');
+const { Offre, Pharmacie, Utilisateur, Reservation, PHARMACIE_CHAMPS_PRIVES } = require('../database/models');
 const authMiddleware = require('../middleware/auth');
 const { pharmacienValide } = authMiddleware;
 const { envoyerNotifications } = require('../utils/notifications');
-const { validerImage, supprimerImage } = require('../utils/images');
+const { validerImage, supprimerImage, memeImage } = require('../utils/images');
+const { aujourdhuiISO } = require('../utils/reservations');
+
+// Rayon des notifications « nouvelle offre près de chez toi »
+const RAYON_NOTIF_KM = parseFloat(process.env.RAYON_NOTIFICATIONS_KM || '15');
 
 const CATEGORIES_VALIDES = ['soin_visage', 'soin_corps', 'complement', 'bebe', 'solaire'];
 const PRIX_MIN = 0.5;    // Minimum accepté par Stripe en EUR
@@ -104,6 +109,7 @@ function validerOffre(body, existante, pharmacieId) {
   const image = validerImage(champs.image, existante?.image, pharmacieId);
   if (!image.ok) return { erreur: 'Image invalide : utilise une image envoyée depuis le dashboard.' };
   if (image.valeur !== undefined) champs.image = image.valeur;
+  else delete champs.image; // inchangée
 
   return { champs };
 }
@@ -111,38 +117,80 @@ function validerOffre(body, existante, pharmacieId) {
 // Infos pharmacie exposées publiquement avec une offre
 const PHARMACIE_PUBLIQUE = { exclude: [...PHARMACIE_CHAMPS_PRIVES, 'valide'] };
 
-// GET /api/offers — Offres actives des pharmacies validées, paginées
+// Conditions « offre visible et réservable par un client »
+function whereOffreDisponible() {
+  return {
+    actif: true,
+    quantiteDisponible: { [Op.gt]: 0 },
+    [Op.or]: [
+      { datePeremption: null },
+      { datePeremption: { [Op.gte]: aujourdhuiISO() } },
+    ],
+  };
+}
+
+function nombreOuNull(v) {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// GET /api/offers — Offres disponibles des pharmacies validées, paginées
+// Query : limite, offset, categorie, recherche, prixMax, pharmacieId,
+//         tri (recent | prix | distance), lat, lng (pour tri distance)
 router.get('/', async (req, res) => {
   try {
     const limite = Math.min(Math.max(parseInt(req.query.limite) || 20, 1), 100);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
-    const aujourdhui = new Date();
-    aujourdhui.setHours(0, 0, 0, 0);
+    const conditions = [whereOffreDisponible()];
 
-    const where = {
-      actif: true,
-      [Op.or]: [
-        { datePeremption: null },
-        { datePeremption: { [Op.gte]: aujourdhui } },
-      ],
-    };
     if (req.query.categorie) {
       if (!CATEGORIES_VALIDES.includes(req.query.categorie)) {
         return res.status(400).json({ erreur: 'Catégorie invalide.' });
       }
-      where.categorie = req.query.categorie;
+      conditions.push({ categorie: req.query.categorie });
+    }
+
+    const prixMax = nombreOuNull(req.query.prixMax);
+    if (prixMax !== null) conditions.push({ prixReduit: { [Op.lte]: prixMax } });
+
+    const pharmacieId = parseInt(req.query.pharmacieId);
+    if (pharmacieId) conditions.push({ pharmacieId });
+
+    if (typeof req.query.recherche === 'string' && req.query.recherche.trim()) {
+      const terme = `%${req.query.recherche.trim().slice(0, 100).replace(/[\\%_]/g, c => `\\${c}`)}%`;
+      conditions.push({
+        [Op.or]: [
+          { titre: { [Op.iLike]: terme } },
+          { '$pharmacie.nom$': { [Op.iLike]: terme } },
+        ],
+      });
+    }
+
+    let order = [['createdAt', 'DESC']];
+    const lat = nombreOuNull(req.query.lat);
+    const lng = nombreOuNull(req.query.lng);
+    if (req.query.tri === 'prix') {
+      order = [['prixReduit', 'ASC'], ['createdAt', 'DESC']];
+    } else if (req.query.tri === 'distance') {
+      if (lat === null || lng === null || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+        return res.status(400).json({ erreur: 'Position requise pour trier par distance.' });
+      }
+      // Distance approximative (équirectangulaire), suffisante pour trier
+      order = [[sequelize.literal(
+        `power("pharmacie"."latitude" - ${lat}, 2) + power(("pharmacie"."longitude" - ${lng}) * cos(radians(${lat})), 2)`
+      ), 'ASC'], ['createdAt', 'DESC']];
     }
 
     const { count, rows } = await Offre.findAndCountAll({
-      where,
+      where: { [Op.and]: conditions },
       include: [{
         model: Pharmacie, as: 'pharmacie',
-        attributes: ['nom', 'adresse', 'latitude', 'longitude'],
+        attributes: ['id', 'nom', 'adresse', 'latitude', 'longitude'],
         where: { valide: true },
         required: true,
       }],
-      order: [['createdAt', 'DESC']],
+      order,
       limit:  limite,
       offset,
     });
@@ -156,25 +204,23 @@ router.get('/', async (req, res) => {
 
     res.json({ offres, total: count, hasMore: offset + limite < count });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ erreur: 'Erreur serveur.' });
   }
 });
 
-// GET /api/offers/pharmacie/:pharmacieId — Offres d'une pharmacie (dashboard)
-router.get('/pharmacie/:pharmacieId', async (req, res) => {
-  const pharmacieId = parseInt(req.params.pharmacieId);
-  if (!pharmacieId) return res.status(400).json({ erreur: 'Identifiant invalide.' });
+// GET /api/offers/mienne — Toutes les offres de la pharmacie du
+// pharmacien connecté, y compris masquées (dashboard)
+router.get('/mienne', authMiddleware, async (req, res) => {
+  const pharmacieId = req.utilisateur.pharmacieId;
+  if (!pharmacieId) return res.status(403).json({ erreur: 'Compte non lié à une pharmacie.' });
   try {
     const offres = await Offre.findAll({
       where: { pharmacieId },
       include: [{ model: Pharmacie, as: 'pharmacie', attributes: ['nom', 'adresse'] }],
       order: [['createdAt', 'DESC']],
     });
-    const resultat = offres.map(o => ({
-      ...o.toJSON(),
-      pharmacieNom: o.pharmacie?.nom,
-    }));
-    res.json(resultat);
+    res.json(offres.map(o => ({ ...o.toJSON(), pharmacieNom: o.pharmacie?.nom })));
   } catch (err) {
     res.status(500).json({ erreur: 'Erreur serveur.' });
   }
@@ -212,17 +258,11 @@ router.post('/', authMiddleware, pharmacienValide, async (req, res) => {
     const pharmacie = await Pharmacie.findByPk(pharmacieId);
     const offre = await Offre.create({ ...champs, pharmacieId });
 
-    // Notifie tous les clients ayant un push token (hors pharmaciens)
-    const utilisateurs = await Utilisateur.findAll({
-      where: { pharmacieId: null, pushToken: { [Op.ne]: null } },
-      attributes: ['pushToken'],
-    });
-    envoyerNotifications(
-      utilisateurs.map(u => u.pushToken),
-      '🛍️ Nouvelle offre disponible !',
-      `${pharmacie?.nom} propose "${offre.titre}" à ${offre.prixReduit}€`,
-      { offreId: offre.id }
-    );
+    // Notifie les clients proches qui ont activé les notifications
+    if (offre.actif) {
+      notifierClientsProches(pharmacie, offre).catch(err =>
+        console.error('Notifications nouvelle offre :', err.message));
+    }
 
     res.status(201).json(offre);
   } catch (err) {
@@ -246,7 +286,7 @@ router.put('/:id', authMiddleware, pharmacienValide, async (req, res) => {
 
     const ancienneImage = offre.image;
     await offre.update(champs);
-    if (champs.image !== undefined && ancienneImage && champs.image !== ancienneImage) {
+    if (champs.image !== undefined && ancienneImage && !memeImage(champs.image, ancienneImage)) {
       supprimerImage(ancienneImage, pharmacieId);
     }
     res.json(offre);
@@ -269,16 +309,63 @@ router.delete('/:id', authMiddleware, async (req, res) => {
       return res.status(403).json({ erreur: 'Action non autorisée.' });
     }
 
+    // Une offre réservée ne se supprime pas (historique, paiements) :
+    // le pharmacien la masque à la place
+    const nbReservations = await Reservation.count({ where: { offreId: offre.id } });
+    if (nbReservations > 0) {
+      return res.status(400).json({ erreur: 'Cette offre a des réservations : masque-la plutôt que de la supprimer.' });
+    }
+
     const imageUrl = offre.image;
     await offre.destroy();
     supprimerImage(imageUrl, pharmacieId);
     res.json({ message: 'Offre supprimée.' });
   } catch (err) {
     if (err.name === 'SequelizeForeignKeyConstraintError') {
-      return res.status(400).json({ erreur: 'Cette offre a des réservations : désactive-la plutôt que de la supprimer.' });
+      return res.status(400).json({ erreur: 'Cette offre a des réservations : masque-la plutôt que de la supprimer.' });
     }
     res.status(500).json({ erreur: 'Erreur serveur.' });
   }
 });
 
+// Envoie « nouvelle offre » aux clients dont la dernière position connue
+// est à moins de RAYON_NOTIF_KM de la pharmacie
+async function notifierClientsProches(pharmacie, offre) {
+  if (!pharmacie) return;
+  // Pré-filtre par carré (1° de latitude ≈ 111 km), puis distance exacte
+  const dLat = RAYON_NOTIF_KM / 111;
+  const dLng = RAYON_NOTIF_KM / (111 * Math.max(Math.cos(pharmacie.latitude * Math.PI / 180), 0.01));
+  const clients = await Utilisateur.findAll({
+    where: {
+      pharmacieId: null,
+      supprimeLe:  null,
+      notifOffres: true,
+      pushToken:   { [Op.ne]: null },
+      notifLat:    { [Op.between]: [pharmacie.latitude - dLat, pharmacie.latitude + dLat] },
+      notifLng:    { [Op.between]: [pharmacie.longitude - dLng, pharmacie.longitude + dLng] },
+    },
+    attributes: ['pushToken', 'notifLat', 'notifLng'],
+  });
+
+  const tokens = clients
+    .filter(c => distanceKm(c.notifLat, c.notifLng, pharmacie.latitude, pharmacie.longitude) <= RAYON_NOTIF_KM)
+    .map(c => c.pushToken);
+
+  await envoyerNotifications(
+    tokens,
+    '🛍️ Nouvelle offre près de chez toi',
+    `${pharmacie.nom} propose « ${offre.titre} » à ${offre.prixReduit.toFixed(2)} €`,
+    { offreId: offre.id }
+  );
+}
+
+function distanceKm(lat1, lon1, lat2, lon2) {
+  const R    = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a    = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 module.exports = router;
+module.exports.whereOffreDisponible = whereOffreDisponible;

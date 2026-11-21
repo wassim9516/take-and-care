@@ -3,8 +3,11 @@
 // ============================================================
 
 import React, { useState } from 'react';
-import { Leaf, ShoppingBasket, Bell, BarChart3, Eye, EyeOff, AlertTriangle, Loader2, ArrowRight } from 'lucide-react';
+import { Leaf, ShoppingBasket, Bell, BarChart3, Eye, EyeOff, AlertTriangle, Loader2, ArrowRight, ArrowLeft, Check } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { demanderReinitialisation, reinitialiserMotDePasse } from '../api/client';
+import { erreurMotDePasse } from '../utils/validation';
+import { LIENS_LEGAUX } from '../config';
 
 export default function Login({ onInscription }) {
   const [email, setEmail]         = useState('');
@@ -12,6 +15,7 @@ export default function Login({ onInscription }) {
   const [voirMdp, setVoirMdp]     = useState(false);
   const [erreur, setErreur]       = useState('');
   const [chargement, setChargement] = useState(false);
+  const [oubli, setOubli]           = useState(false);
   const { seConnecter } = useAuth();
 
   const handleSubmit = async (e) => {
@@ -67,6 +71,9 @@ export default function Login({ onInscription }) {
 
       {/* Formulaire */}
       <section className="tc-login-formulaire">
+        {oubli ? (
+          <MotDePasseOublie emailInitial={email} onRetour={() => setOubli(false)} />
+        ) : (
         <div className="tc-login-carte tc-apparait">
           <h1>Bon retour</h1>
           <p>Connecte-toi pour gérer tes offres et tes réservations.</p>
@@ -111,6 +118,9 @@ export default function Login({ onInscription }) {
             <button type="submit" className="tc-btn tc-btn-primaire tc-btn-large" disabled={chargement} style={{ marginTop: 4 }}>
               {chargement ? <><Loader2 size={17} className="tc-tourne" /> Connexion…</> : 'Se connecter'}
             </button>
+            <button type="button" className="tc-btn tc-btn-fantome tc-btn-petit" onClick={() => { setErreur(''); setOubli(true); }} style={{ alignSelf: 'center' }}>
+              Mot de passe oublié ?
+            </button>
           </form>
 
           <div className="tc-separateur">Nouvelle pharmacie ?</div>
@@ -118,8 +128,104 @@ export default function Login({ onInscription }) {
           <button className="tc-btn tc-btn-secondaire tc-btn-large" onClick={onInscription}>
             Créer un espace pharmacien <ArrowRight size={16} />
           </button>
+
+          <p style={{ textAlign: 'center', marginTop: 18, fontSize: 12.5, color: 'var(--encre-3)' }}>
+            <a href={LIENS_LEGAUX.cgu} target="_blank" rel="noreferrer">Conditions générales</a>
+            {' · '}
+            <a href={LIENS_LEGAUX.confidentialite} target="_blank" rel="noreferrer">Confidentialité</a>
+          </p>
         </div>
+        )}
       </section>
+    </div>
+  );
+}
+
+// -------------------------------------------------------
+// Mot de passe oublié : code reçu par email + nouveau mot de passe
+// -------------------------------------------------------
+function MotDePasseOublie({ emailInitial, onRetour }) {
+  const [etape, setEtape]           = useState(1);
+  const [email, setEmail]           = useState(emailInitial || '');
+  const [code, setCode]             = useState('');
+  const [motDePasse, setMotDePasse] = useState('');
+  const [erreur, setErreur]         = useState('');
+  const [info, setInfo]             = useState('');
+  const [chargement, setChargement] = useState(false);
+  const [termine, setTermine]       = useState(false);
+
+  const envoyerCode = async (e) => {
+    e?.preventDefault();
+    setErreur('');
+    setChargement(true);
+    try {
+      const { message } = await demanderReinitialisation(email.trim());
+      setInfo(message);
+      setEtape(2);
+    } catch (err) {
+      setErreur(err.response?.data?.erreur || 'Impossible d\'envoyer le code. Réessaie.');
+    } finally {
+      setChargement(false);
+    }
+  };
+
+  const valider = async (e) => {
+    e.preventDefault();
+    setErreur('');
+    const erreurMdp = erreurMotDePasse(motDePasse);
+    if (erreurMdp) return setErreur(erreurMdp);
+    setChargement(true);
+    try {
+      await reinitialiserMotDePasse(email.trim(), code.trim(), motDePasse);
+      setTermine(true);
+    } catch (err) {
+      setErreur(err.response?.data?.erreur || 'Code incorrect ou expiré.');
+    } finally {
+      setChargement(false);
+    }
+  };
+
+  return (
+    <div className="tc-login-carte tc-apparait">
+      <h1>Mot de passe oublié</h1>
+      {termine ? (
+        <>
+          <div className="tc-alerte succes"><Check size={16} /> Mot de passe modifié. Tu peux te connecter.</div>
+          <button className="tc-btn tc-btn-primaire tc-btn-large" onClick={onRetour} style={{ marginTop: 16 }}>Se connecter</button>
+        </>
+      ) : etape === 1 ? (
+        <form onSubmit={envoyerCode} className="tc-formulaire">
+          <p>Saisis l'email de ton compte : on t'envoie un code à 6 chiffres.</p>
+          <div className="tc-groupe">
+            <label className="tc-label" htmlFor="oubli-email">Email</label>
+            <input id="oubli-email" type="email" autoComplete="email" className="tc-champ" value={email} onChange={e => setEmail(e.target.value)} required autoFocus />
+          </div>
+          {erreur && <div className="tc-alerte erreur"><AlertTriangle size={16} /> {erreur}</div>}
+          <button type="submit" className="tc-btn tc-btn-primaire tc-btn-large" disabled={chargement}>
+            {chargement ? <Loader2 size={17} className="tc-tourne" /> : 'Recevoir le code'}
+          </button>
+        </form>
+      ) : (
+        <form onSubmit={valider} className="tc-formulaire">
+          <p>{info}</p>
+          <div className="tc-groupe">
+            <label className="tc-label" htmlFor="oubli-code">Code reçu par email</label>
+            <input id="oubli-code" className="tc-champ" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ''))} required autoFocus />
+          </div>
+          <div className="tc-groupe">
+            <label className="tc-label" htmlFor="oubli-mdp">Nouveau mot de passe</label>
+            <input id="oubli-mdp" type="password" autoComplete="new-password" className="tc-champ" value={motDePasse} onChange={e => setMotDePasse(e.target.value)} placeholder="8 caractères, lettres et chiffres" required />
+          </div>
+          {erreur && <div className="tc-alerte erreur"><AlertTriangle size={16} /> {erreur}</div>}
+          <button type="submit" className="tc-btn tc-btn-primaire tc-btn-large" disabled={chargement}>
+            {chargement ? <Loader2 size={17} className="tc-tourne" /> : 'Changer le mot de passe'}
+          </button>
+          <button type="button" className="tc-btn tc-btn-fantome tc-btn-petit" onClick={() => envoyerCode()} disabled={chargement}>Renvoyer un code</button>
+        </form>
+      )}
+      <button type="button" className="tc-btn tc-btn-fantome" onClick={onRetour} style={{ marginTop: 12 }}>
+        <ArrowLeft size={15} /> Retour à la connexion
+      </button>
     </div>
   );
 }

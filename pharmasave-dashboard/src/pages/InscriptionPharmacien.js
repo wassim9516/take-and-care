@@ -5,6 +5,9 @@
 import React, { useState } from 'react';
 import { Leaf, Check, MapPin, Crosshair, ArrowRight, ArrowLeft, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { erreurMotDePasse } from '../utils/validation';
+import { geocoderAdresse } from '../utils/geocodage';
+import { LIENS_LEGAUX } from '../config';
 
 const VERT    = '#2D6A4F';
 const VERT_F  = '#1B4332';
@@ -34,6 +37,8 @@ export default function InscriptionPharmacien({ onRetourConnexion }) {
   const [horaires, setHoraires]         = useState('');
   const [latitude, setLatitude]         = useState('');
   const [longitude, setLongitude]       = useState('');
+  const [adresseTrouvee, setAdresseTrouvee] = useState('');
+  const [cguAcceptees, setCguAcceptees] = useState(false);
 
   // -------------------------------------------------------
   // Validation étape 1
@@ -44,8 +49,9 @@ export default function InscriptionPharmacien({ onRetourConnexion }) {
       setErreur('Tous les champs sont obligatoires.');
       return;
     }
-    if (motDePasse.length < 6) {
-      setErreur('Le mot de passe doit faire au moins 6 caractères.');
+    const erreurMdp = erreurMotDePasse(motDePasse);
+    if (erreurMdp) {
+      setErreur(erreurMdp);
       return;
     }
     if (motDePasse !== confirmer) {
@@ -78,6 +84,30 @@ export default function InscriptionPharmacien({ onRetourConnexion }) {
   };
 
   // -------------------------------------------------------
+  // Géocodage : adresse → coordonnées (Base Adresse Nationale)
+  // -------------------------------------------------------
+  const localiserAdresse = async () => {
+    setErreur('');
+    setGeoChargement(true);
+    try {
+      const resultat = await geocoderAdresse(adresse);
+      if (!resultat) {
+        setErreur('Adresse introuvable. Vérifie-la ou utilise « Ma position actuelle ».');
+        return null;
+      }
+      setLatitude(resultat.latitude);
+      setLongitude(resultat.longitude);
+      setAdresseTrouvee(resultat.libelle);
+      return resultat;
+    } catch {
+      setErreur('Localisation de l\'adresse impossible pour le moment. Utilise « Ma position actuelle ».');
+      return null;
+    } finally {
+      setGeoChargement(false);
+    }
+  };
+
+  // -------------------------------------------------------
   // Soumission finale
   // -------------------------------------------------------
   const handleSubmit = async (e) => {
@@ -87,6 +117,18 @@ export default function InscriptionPharmacien({ onRetourConnexion }) {
     if (!nomPharmacie.trim() || !adresse.trim()) {
       setErreur('Le nom et l\'adresse de la pharmacie sont obligatoires.');
       return;
+    }
+    if (!cguAcceptees) {
+      setErreur('Accepte les conditions générales pour créer ton espace.');
+      return;
+    }
+
+    // Coordonnées manquantes : on les déduit de l'adresse
+    let coords = { latitude, longitude };
+    if (!latitude || !longitude) {
+      const resultat = await localiserAdresse();
+      if (!resultat) return;
+      coords = resultat;
     }
 
     setChargement(true);
@@ -100,8 +142,8 @@ export default function InscriptionPharmacien({ onRetourConnexion }) {
         adresse: adresse.trim(),
         telephone: telephone.trim(),
         horaires: horaires.trim(),
-        latitude:  latitude  || undefined,
-        longitude: longitude || undefined,
+        latitude:  coords.latitude,
+        longitude: coords.longitude,
       });
       // AuthContext met à jour le state → redirige automatiquement vers Dashboard
     } catch (err) {
@@ -148,7 +190,7 @@ export default function InscriptionPharmacien({ onRetourConnexion }) {
               <ChampTexte label="Nom *" value={nom} onChange={setNom} placeholder="Dupont" />
             </div>
             <ChampTexte label="Email professionnel *" value={email} onChange={setEmail} placeholder="marie@pharmacie.fr" type="email" />
-            <ChampTexte label="Mot de passe *" value={motDePasse} onChange={setMotDePasse} placeholder="6 caractères minimum" type="password" />
+            <ChampTexte label="Mot de passe *" value={motDePasse} onChange={setMotDePasse} placeholder="8 caractères, lettres et chiffres" type="password" />
             <ChampTexte label="Confirmer le mot de passe *" value={confirmer} onChange={setConfirmer} placeholder="••••••••" type="password" />
 
             {erreur && <div style={s.erreur}>{erreur}</div>}
@@ -163,7 +205,7 @@ export default function InscriptionPharmacien({ onRetourConnexion }) {
         {etape === 2 && (
           <form onSubmit={handleSubmit} style={s.formulaire}>
             <ChampTexte label="Nom de la pharmacie *" value={nomPharmacie} onChange={setNomPharmacie} placeholder="Pharmacie du Centre" />
-            <ChampTexte label="Adresse complète *" value={adresse} onChange={setAdresse} placeholder="12 Rue du Commerce, 75015 Paris" />
+            <ChampTexte label="Adresse complète *" value={adresse} onChange={(v) => { setAdresse(v); setAdresseTrouvee(''); }} placeholder="12 Rue du Commerce, 75015 Paris" />
             <ChampTexte label="Téléphone" value={telephone} onChange={setTelephone} placeholder="01 23 45 67 89" type="tel" />
             <ChampTexte label="Horaires" value={horaires} onChange={setHoraires} placeholder="Lun-Sam 8h30-20h, Dim 9h-13h" />
 
@@ -171,18 +213,33 @@ export default function InscriptionPharmacien({ onRetourConnexion }) {
             <div style={s.blocGeo}>
               <div style={s.ligneGeo}>
                 <span style={{ ...s.labelGeo, display: 'inline-flex', alignItems: 'center', gap: 6 }}><MapPin size={15} /> Coordonnées GPS</span>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button type="button" style={s.boutonGeo} onClick={localiserAdresse} disabled={geoChargement || adresse.trim().length < 5}>
+                  <MapPin size={14} style={{ verticalAlign: '-2px' }} /> Localiser l'adresse
+                </button>
                 <button type="button" style={s.boutonGeo} onClick={geoLocaliser} disabled={geoChargement}>
                   {geoChargement ? <><Loader2 size={14} className="tc-tourne" style={{ verticalAlign: '-2px' }} /> Localisation…</> : <><Crosshair size={14} style={{ verticalAlign: '-2px' }} /> Ma position actuelle</>}
                 </button>
+                </div>
               </div>
               <div style={s.ligneChamps}>
                 <ChampTexte label="Latitude" value={latitude} onChange={setLatitude} placeholder="48.856600" type="number" />
                 <ChampTexte label="Longitude" value={longitude} onChange={setLongitude} placeholder="2.352200" type="number" />
               </div>
               <p style={s.noteGeo}>
-                Utilisez "Ma position actuelle" si vous êtes à la pharmacie, ou saisissez les coordonnées manuellement. Elles peuvent être modifiées plus tard.
+                {adresseTrouvee
+                  ? `Position trouvée : ${adresseTrouvee}. Vérifie qu'elle correspond bien à ta pharmacie.`
+                  : 'Clique sur « Localiser l\'adresse » (ou « Ma position actuelle » si tu es à la pharmacie). Modifiable plus tard dans les réglages.'}
               </p>
             </div>
+
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, color: '#4A5D4A', lineHeight: 1.45 }}>
+              <input type="checkbox" checked={cguAcceptees} onChange={e => setCguAcceptees(e.target.checked)} style={{ marginTop: 3 }} />
+              <span>
+                J'accepte les <a href={LIENS_LEGAUX.cgu} target="_blank" rel="noreferrer">conditions générales</a> et
+                la <a href={LIENS_LEGAUX.confidentialite} target="_blank" rel="noreferrer">politique de confidentialité</a>.
+              </span>
+            </label>
 
             {erreur && <div style={s.erreur}>{erreur}</div>}
 
@@ -350,6 +407,8 @@ const s = {
   },
   ligneGeo: {
     display: 'flex',
+    flexWrap: 'wrap',
+    gap: 8,
     justifyContent: 'space-between',
     alignItems: 'center',
   },

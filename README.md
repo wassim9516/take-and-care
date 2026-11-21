@@ -67,7 +67,7 @@ pharmasave-backend/     # API REST
 ## Installation
 
 Prérequis : Node.js 18+, PostgreSQL, et l'application Expo Go sur ton téléphone.
-Le pas-à-pas complet est dans [DEMARRAGE.md](DEMARRAGE.md).
+Le pas-à-pas complet est dans [DEMARRAGE.md](DEMARRAGE.md), la publication sur les stores dans [PUBLICATION.md](PUBLICATION.md).
 
 ## Sécurité
 
@@ -78,9 +78,13 @@ Ce projet fait l'objet d'un **audit de sécurité** mené selon l'OWASP MASVS et
 ## Feuille de route
 
 - [x] Paiement en ligne avec Stripe (nécessite un build EAS, pas Expo Go)
-- [x] Notifications push (nouvelles offres)
-- [ ] Notifications push géolocalisées et rappel de retrait
-- [ ] Scan du QR code de retrait depuis le dashboard
+- [x] Notifications push géolocalisées (nouvelles offres proches, désactivables)
+- [x] Expiration automatique des réservations non retirées (48 h)
+- [x] Mot de passe oublié, suppression de compte, pages légales (prérequis des stores)
+- [x] Rappel de retrait avant expiration
+- [x] Scan du QR code de retrait depuis le dashboard
+- [x] Espace d'administration (validation des pharmacies, chiffres clés)
+- [x] Tests automatisés (API et dashboard)
 - [ ] Publication sur l'App Store et le Google Play Store
 - [ ] Correction des vulnérabilités identifiées lors de l'audit
 

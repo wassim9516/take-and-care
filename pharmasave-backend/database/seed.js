@@ -35,6 +35,7 @@ async function seed() {
 
     // Recrée les tables (force: true efface les données existantes)
     await sequelize.sync({ force: true });
+    await require('./migrations').executerMigrations();
     console.log('Tables créées.');
 
     // --- Pharmacies ---

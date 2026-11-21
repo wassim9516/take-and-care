@@ -31,7 +31,7 @@ module.exports = async function authMiddleware(req, res, next) {
 
   try {
     const utilisateur = await Utilisateur.findByPk(decoded.id, {
-      attributes: ['id', 'email', 'pharmacieId', 'tokenVersion'],
+      attributes: ['id', 'email', 'pharmacieId', 'tokenVersion', 'estAdmin'],
       include: [{ model: Pharmacie, as: 'pharmacie', attributes: ['valide'] }],
     });
 
@@ -45,11 +45,20 @@ module.exports = async function authMiddleware(req, res, next) {
       email:            utilisateur.email,
       pharmacieId:      utilisateur.pharmacieId,
       pharmacieValidee: !!utilisateur.pharmacie?.valide,
+      estAdmin:         !!utilisateur.estAdmin,
     };
     next();
   } catch (err) {
     next(err);
   }
+};
+
+// Middleware à chaîner après authMiddleware : réservé aux administrateurs
+module.exports.adminSeulement = function adminSeulement(req, res, next) {
+  if (!req.utilisateur.estAdmin) {
+    return res.status(403).json({ erreur: 'Accès réservé à l\'équipe Take & Care.' });
+  }
+  next();
 };
 
 // Middleware à chaîner après authMiddleware : réservé aux pharmaciens

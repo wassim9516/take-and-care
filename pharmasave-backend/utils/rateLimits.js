@@ -7,7 +7,11 @@ const rateLimit = require('express-rate-limit');
 // Routes sensibles (connexion, inscription, code SMS, mot de passe) :
 // 15 tentatives / 15 min par IP. Ne PAS l'appliquer à /moi, /profil…
 // qui sont appelées à chaque ouverture de l'app.
+// Désactivées pendant les tests automatisés (NODE_ENV=test)
+const skip = () => process.env.NODE_ENV === 'test';
+
 const limiteAuth = rateLimit({
+  skip,
   windowMs: 15 * 60 * 1000,
   max: 15,
   standardHeaders: true,
@@ -17,6 +21,7 @@ const limiteAuth = rateLimit({
 
 // API générale : 200 requêtes / minute par IP
 const limiteAPI = rateLimit({
+  skip,
   windowMs: 60 * 1000,
   max: 200,
   standardHeaders: true,

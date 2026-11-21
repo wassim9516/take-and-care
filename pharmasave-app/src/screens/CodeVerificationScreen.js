@@ -9,11 +9,15 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
+import { useAuth } from '../context/AuthContext';
+import { renvoyerCode } from '../api/client';
 
 const NB_CHIFFRES = 6;
 
 export default function CodeVerificationScreen({ route, navigation }) {
-  const { telephone, apercu, onConfirmer } = route.params;
+  const { telephone, apercu: apercuInitial } = route.params;
+  const { confirmerCompte } = useAuth();
+  const [apercu, setApercu] = useState(apercuInitial);
 
   const [chiffres, setChiffres]     = useState(Array(NB_CHIFFRES).fill(''));
   const [chargement, setChargement] = useState(false);
@@ -70,7 +74,7 @@ export default function CodeVerificationScreen({ route, navigation }) {
     }
     setChargement(true);
     try {
-      await onConfirmer(telephone, code);
+      await confirmerCompte(telephone, code);
       // Si succès : AuthContext met à jour → App redirige automatiquement
     } catch (err) {
       const message = err?.response?.data?.erreur || 'Code incorrect ou expiré.';
@@ -86,13 +90,14 @@ export default function CodeVerificationScreen({ route, navigation }) {
   const handleRenvoyer = async () => {
     if (compteur > 0) return;
     try {
-      await route.params.onRenvoyer();
+      const resultat = await renvoyerCode(telephone);
+      if (resultat?.apercu) setApercu(resultat.apercu);
       setCompteur(60);
       setChiffres(Array(NB_CHIFFRES).fill(''));
       refsInput.current[0]?.focus();
       Alert.alert('Code renvoyé', 'Un nouveau code a été envoyé par SMS.');
-    } catch {
-      Alert.alert('Erreur', 'Impossible de renvoyer le code.');
+    } catch (err) {
+      Alert.alert('Erreur', err?.response?.data?.erreur || 'Impossible de renvoyer le code.');
     }
   };
 

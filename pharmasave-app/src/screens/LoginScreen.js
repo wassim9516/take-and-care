@@ -6,11 +6,13 @@ import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, ActivityIndicator, KeyboardAvoidingView,
-  Platform, ScrollView, Alert,
+  Platform, ScrollView, Alert, Linking,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 import { useAuth } from '../context/AuthContext';
+import { LIENS_LEGAUX } from '../config';
+import { erreurMotDePasse } from '../utils/validation';
 
 export default function LoginScreen({ navigation }) {
   const [mode, setMode]               = useState('connexion');
@@ -22,7 +24,7 @@ export default function LoginScreen({ navigation }) {
   const [afficherMdp, setAfficherMdp] = useState(false);
   const [chargement, setChargement]   = useState(false);
 
-  const { seConnecter, demanderCodeSMS, confirmerCompte } = useAuth();
+  const { seConnecter, demanderCodeSMS } = useAuth();
 
   const handleSubmit = async () => {
     if (!email.trim() || !motDePasse.trim()) {
@@ -48,6 +50,8 @@ export default function LoginScreen({ navigation }) {
     if (!telephone.trim()) {
       return Alert.alert('Champs manquants', 'Le numéro de téléphone est obligatoire.');
     }
+    const erreurMdp = erreurMotDePasse(motDePasse);
+    if (erreurMdp) return Alert.alert('Mot de passe trop faible', erreurMdp);
 
     setChargement(true);
     try {
@@ -58,8 +62,6 @@ export default function LoginScreen({ navigation }) {
       navigation.navigate('Verification', {
         telephone: telephone.trim(),
         apercu:    result.apercu,
-        onConfirmer: confirmerCompte,
-        onRenvoyer:  () => demanderCodeSMS(prenom.trim(), nom.trim(), email.trim(), motDePasse, telephone.trim()),
       });
     } catch (err) {
       Alert.alert('Erreur', err.response?.data?.erreur || 'Une erreur est survenue.');
@@ -165,6 +167,12 @@ export default function LoginScreen({ navigation }) {
             </Text>
           )}
 
+          {mode === 'connexion' && (
+            <TouchableOpacity onPress={() => navigation.navigate('MotDePasseOublie', { email: email.trim() })}>
+              <Text style={styles.lienOubli}>Mot de passe oublié ?</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={[styles.bouton, chargement && styles.boutonDesactive]}
             onPress={handleSubmit}
@@ -177,6 +185,15 @@ export default function LoginScreen({ navigation }) {
                 </Text>
             }
           </TouchableOpacity>
+
+          {mode === 'inscription' && (
+            <Text style={styles.texteLegal}>
+              En créant un compte, tu acceptes les{' '}
+              <Text style={styles.lienLegal} onPress={() => Linking.openURL(LIENS_LEGAUX.cgu)}>conditions générales</Text>
+              {' '}et la{' '}
+              <Text style={styles.lienLegal} onPress={() => Linking.openURL(LIENS_LEGAUX.confidentialite)}>politique de confidentialité</Text>.
+            </Text>
+          )}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -184,6 +201,25 @@ export default function LoginScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
+  lienOubli: {
+    color: COLORS.primaire,
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'right',
+    marginTop: -4,
+  },
+  texteLegal: {
+    color: COLORS.texteClair,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  lienLegal: {
+    color: COLORS.primaire,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
   conteneur: { flex: 1, backgroundColor: '#FAF7F0' },
   scroll: { flexGrow: 1, justifyContent: 'center', padding: 24 },
   entete: { alignItems: 'center', marginBottom: 36 },

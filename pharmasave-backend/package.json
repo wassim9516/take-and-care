@@ -7,7 +7,9 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "seed": "node database/seed.js",
-    "valider-pharmacie": "node scripts/valider-pharmacie.js"
+    "valider-pharmacie": "node scripts/valider-pharmacie.js",
+    "test": "node --test --test-concurrency=1 \"tests/**/*.test.js\"",
+    "admin": "node scripts/admin.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -19,6 +21,7 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
+    "nodemailer": "^10.6.1",
     "pg": "^8.20.0",
     "sequelize": "^6.37.8",
     "stripe": "^22.1.0",
@@ -27,5 +30,9 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
+  },
+  "overrides": {
+    "qs": "^6.17.1",
+    "uuid": "^11.1.1"
   }
 }

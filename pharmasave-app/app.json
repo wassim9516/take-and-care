@@ -11,19 +11,39 @@
     ],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "fr.takeandcare.app"
+      "bundleIdentifier": "fr.takeandcare.app",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#2ECC71"
       },
-      "package": "fr.takeandcare.app"
+      "package": "fr.takeandcare.app",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
+      "blockedPermissions": [
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "plugins": [
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Take & Care a besoin de ta position pour trouver les pharmacies près de toi."
+          "locationWhenInUsePermission": "Take & Care utilise ta position pour afficher les pharmacies et les offres proches de toi.",
+          "isIosBackgroundLocationEnabled": false,
+          "isAndroidBackgroundLocationEnabled": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#2D6A4F"
         }
       ],
       [

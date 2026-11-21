@@ -92,14 +92,16 @@ export default function FormulaireOffre({ pharmacieId, offre, onTermine, onAnnul
     }
 
     const q = parseInt(quantite, 10);
+    const quantiteModifiee = !estModification || String(quantite) !== String(offre.quantiteDisponible);
     const data = {
-      pharmacieId,
       titre,
       description,
       produits: produitsArray,
       prixOriginal:       pOrig,
       prixReduit:         pRed,
-      quantiteDisponible: Number.isNaN(q) ? 1 : q,
+      // En modification, le stock n'est envoyé que s'il a été changé :
+      // sinon on écraserait les paniers réservés pendant l'édition
+      ...(quantiteModifiee ? { quantiteDisponible: Number.isNaN(q) ? 1 : q } : {}),
       datePeremption,
       categorie,
       heureRetrait,
@@ -220,7 +222,7 @@ export default function FormulaireOffre({ pharmacieId, offre, onTermine, onAnnul
           <div className="tc-ligne">
             <div className="tc-groupe">
               <label className="tc-label" htmlFor="o-date">Date de péremption</label>
-              <input id="o-date" className="tc-champ" type="date" value={datePeremption || ''} onChange={e => setDatePeremption(e.target.value)} />
+              <input id="o-date" className="tc-champ" type="date" min={estModification ? undefined : new Date().toISOString().slice(0, 10)} value={datePeremption || ''} onChange={e => setDatePeremption(e.target.value)} />
             </div>
             <div className="tc-groupe">
               <label className="tc-label" htmlFor="o-heure">Créneau de retrait</label>

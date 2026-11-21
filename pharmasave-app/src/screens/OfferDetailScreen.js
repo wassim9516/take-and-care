@@ -17,6 +17,9 @@ import { getOffre, creerReservation, creerIntentPaiement } from '../api/client';
 
 const paiementActif = !!CONFIG.STRIPE_PUBLISHABLE_KEY;
 
+// Délai de retrait (RESERVATION_DUREE_HEURES côté serveur)
+const DELAI_RETRAIT_HEURES = 48;
+
 // Import conditionnel Stripe — uniquement si la clé est configurée
 let useStripeHook = null;
 if (paiementActif) {
@@ -35,6 +38,7 @@ export default function OfferDetailScreen({ route, navigation }) {
   // on les utilise directement sans appel réseau
   const [offre, setOffre]           = useState(offreData || null);
   const [chargement, setChargement] = useState(!offreData && !!offerId);
+  const [indisponible, setIndisponible] = useState(false);
 
   const appliquerOptions = (data) => {
     navigation.setOptions({
@@ -50,20 +54,25 @@ export default function OfferDetailScreen({ route, navigation }) {
   // -------------------------------------------------------
   // Charger l'offre si on n'a pas les données (navigation directe)
   // -------------------------------------------------------
+  // Les données passées par l'écran précédent s'affichent tout de suite,
+  // puis sont rafraîchies (stock, prix) depuis le serveur
   useEffect(() => {
-    if (offreData) {
-      appliquerOptions(offreData);
-      return;
-    }
+    if (offreData) appliquerOptions(offreData);
     const charger = async () => {
       try {
         const data = await getOffre(offerId);
-        setOffre(data);
+        setOffre(prev => ({ ...prev, ...data }));
         appliquerOptions(data);
       } catch (err) {
+        if (err?.response?.status === 404) {
+          if (offreData) { setIndisponible(true); return; }
+          Alert.alert('Offre introuvable', 'Cette offre n\'est plus disponible.');
+          navigation.goBack();
+          return;
+        }
+        if (offreData) return; // on garde les données déjà affichées
         const msg = err?.response?.data?.erreur
-          || (err?.code === 'ECONNABORTED' ? 'Délai dépassé — vérifie que le serveur est lancé et que l\'IP dans config.js est correcte.' : null)
-          || err?.message
+          || (err?.code === 'ECONNABORTED' ? 'Délai dépassé. Vérifie ta connexion internet.' : null)
           || 'Impossible de charger les détails de cette offre.';
         Alert.alert('Erreur réseau', msg);
         navigation.goBack();
@@ -71,7 +80,7 @@ export default function OfferDetailScreen({ route, navigation }) {
         setChargement(false);
       }
     };
-    charger();
+    if (offerId) charger();
   }, [offerId]);
 
   // -------------------------------------------------------
@@ -87,8 +96,8 @@ export default function OfferDetailScreen({ route, navigation }) {
           `🍀 Take & Care — Bonne affaire !\n\n` +
           `🛍️ ${data.titre}\n` +
           `💊 ${data.pharmacieNom}\n` +
-          `💰 ${data.prixReduit.toFixed(2)}€ au lieu de ${data.prixOriginal.toFixed(2)}€ (-${reduction}%)\n` +
-          `⏰ Retrait : ${data.heureRetrait}\n\n` +
+          `💰 ${Number(data.prixReduit).toFixed(2)}€ au lieu de ${Number(data.prixOriginal).toFixed(2)}€ (-${reduction}%)\n` +
+          (data.heureRetrait ? `⏰ Retrait : ${data.heureRetrait}\n` : '') + '\n' +
           `Télécharge Take & Care pour réserver !`,
         title: data.titre,
       });
@@ -122,7 +131,10 @@ export default function OfferDetailScreen({ route, navigation }) {
 
         {/* Image principale */}
         <View style={styles.conteneurImage}>
-          <Image source={{ uri: offre.image }} style={styles.image} />
+          <Image
+            source={offre.image ? { uri: offre.image } : require('../../assets/placeholder.png')}
+            style={styles.image}
+          />
           {/* Badge de réduction sur l'image */}
           <View style={styles.badge}>
             <Text style={styles.texteBadge}>-{reduction}%</Text>
@@ -136,7 +148,7 @@ export default function OfferDetailScreen({ route, navigation }) {
           <Text style={styles.titre}>{offre.titre}</Text>
 
           {/* Description */}
-          <Text style={styles.description}>{offre.description}</Text>
+          {!!offre.description && <Text style={styles.description}>{offre.description}</Text>}
 
           {/* Séparateur */}
           <View style={styles.separateur} />
@@ -155,12 +167,19 @@ export default function OfferDetailScreen({ route, navigation }) {
           {/* Infos pratiques */}
           <Text style={styles.sousTitre}>Infos pratiques :</Text>
 
+          {!!offre.heureRetrait && (
+            <View style={styles.ligneInfo}>
+              <Ionicons name="time-outline" size={18} color={COLORS.secondaire} />
+              <Text style={styles.texteInfo}>Retrait : {offre.heureRetrait}</Text>
+            </View>
+          )}
+
           <View style={styles.ligneInfo}>
-            <Ionicons name="time-outline" size={18} color={COLORS.secondaire} />
-            <Text style={styles.texteInfo}>Retrait : {offre.heureRetrait}</Text>
+            <Ionicons name="hourglass-outline" size={18} color={COLORS.secondaire} />
+            <Text style={styles.texteInfo}>À retirer dans les {DELAI_RETRAIT_HEURES} h suivant la réservation</Text>
           </View>
 
-          {offre.datePeremption && (
+          {!!offre.datePeremption && (
             <View style={styles.ligneInfo}>
               <Ionicons name="calendar-outline" size={18} color={COLORS.secondaire} />
               <Text style={styles.texteInfo}>
@@ -172,7 +191,9 @@ export default function OfferDetailScreen({ route, navigation }) {
           <View style={styles.ligneInfo}>
             <Ionicons name="basket-outline" size={18} color={COLORS.secondaire} />
             <Text style={styles.texteInfo}>
-              {offre.quantiteDisponible} panier{offre.quantiteDisponible > 1 ? 's' : ''} restant{offre.quantiteDisponible > 1 ? 's' : ''}
+              {offre.quantiteDisponible > 0
+                ? `${offre.quantiteDisponible} panier${offre.quantiteDisponible > 1 ? 's' : ''} restant${offre.quantiteDisponible > 1 ? 's' : ''}`
+                : 'Épuisé'}
             </Text>
           </View>
 
@@ -183,12 +204,33 @@ export default function OfferDetailScreen({ route, navigation }) {
       </ScrollView>
 
       {/* Pied de page : affiché par un sous-composant selon Stripe actif ou non */}
-      {paiementActif
+      {indisponible || !offre.actif || offre.quantiteDisponible <= 0 ? (
+        <View style={styles.piedPage}>
+          <LignePrix offre={offre} />
+          <View style={[styles.boutonReserver, styles.boutonDesactive]}>
+            <Text style={styles.texteBouton}>Plus disponible</Text>
+          </View>
+        </View>
+      ) : paiementActif
         ? <PiedPageStripe offre={offre} navigation={navigation} />
         : <PiedPageSimple offre={offre} navigation={navigation} />
       }
 
     </View>
+  );
+}
+
+function confirmerReservation(reservation, navigation) {
+  const limite = reservation.expireLe
+    ? new Date(reservation.expireLe).toLocaleString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
+    : null;
+  Alert.alert(
+    '🎉 Réservation confirmée !',
+    `Numéro : ${reservation.numero}\n\n` +
+    (reservation.heureRetrait ? `Retrait : ${reservation.heureRetrait}\n` : '') +
+    (limite ? `À retirer avant le ${limite}.\n` : '') +
+    `\nTon QR code de retrait est dans ton profil.`,
+    [{ text: 'Super !', onPress: () => navigation.goBack() }]
   );
 }
 
@@ -217,14 +259,24 @@ function PiedPageStripe({ offre, navigation }) {
         return;
       }
 
-      const resultat = await creerReservation(offre.id, intent.paymentIntentId);
-      Alert.alert(
-        '🎉 Réservation confirmée !',
-        `Numéro : ${resultat.reservation.numero}\n\nPasse à la pharmacie entre ${resultat.reservation.heureRetrait} avec ton numéro de réservation.`,
-        [{ text: 'Super !', onPress: () => navigation.goBack() }]
-      );
+      // Le paiement est passé : à partir d'ici, ne jamais inviter à
+      // « réessayer » (le client paierait deux fois). Si l'appel échoue,
+      // le serveur crée quand même la réservation via le webhook Stripe.
+      try {
+        const resultat = await creerReservation(offre.id, intent.paymentIntentId);
+        confirmerReservation(resultat.reservation, navigation);
+      } catch (err) {
+        const message = err?.response?.status && err.response.status < 500
+          ? err.response.data?.erreur
+          : null;
+        Alert.alert(
+          message ? 'Réservation impossible' : 'Paiement reçu',
+          message || 'Ton paiement est bien passé. Ta réservation apparaîtra dans ton profil d\'ici quelques instants. Ne repaie pas.',
+          [{ text: 'OK', onPress: () => navigation.goBack() }]
+        );
+      }
     } catch (err) {
-      Alert.alert('Erreur', err?.response?.data?.erreur || 'La réservation a échoué. Réessaie.');
+      Alert.alert('Erreur', err?.response?.data?.erreur || err?.message || 'Le paiement n\'a pas pu démarrer. Réessaie.');
     } finally {
       setEnCours(false);
     }
@@ -240,7 +292,7 @@ function PiedPageStripe({ offre, navigation }) {
       >
         {enCours
           ? <ActivityIndicator color={COLORS.blanc} />
-          : <Text style={styles.texteBouton}>Payer {offre.prixReduit.toFixed(2)} €</Text>
+          : <Text style={styles.texteBouton}>Payer {Number(offre.prixReduit).toFixed(2)} €</Text>
         }
       </TouchableOpacity>
     </View>
@@ -256,7 +308,9 @@ function PiedPageSimple({ offre, navigation }) {
   const handleReserver = () => {
     Alert.alert(
       'Confirmer la réservation',
-      `Tu vas réserver "${offre.titre}" pour ${offre.prixReduit?.toFixed(2) ?? '0.00'}€.\n\nRetrait : ${offre.heureRetrait}`,
+      `Tu vas réserver "${offre.titre}" pour ${Number(offre.prixReduit || 0).toFixed(2)}€, à payer à la pharmacie.\n\n` +
+      (offre.heureRetrait ? `Retrait : ${offre.heureRetrait}\n` : '') +
+      `Tu as ${DELAI_RETRAIT_HEURES} h pour retirer ton panier.`,
       [
         { text: 'Annuler', style: 'cancel' },
         {
@@ -265,11 +319,7 @@ function PiedPageSimple({ offre, navigation }) {
             setEnCours(true);
             try {
               const resultat = await creerReservation(offre.id);
-              Alert.alert(
-                '🎉 Réservation confirmée !',
-                `Numéro : ${resultat.reservation.numero}\n\nPasse à la pharmacie entre ${resultat.reservation.heureRetrait} avec ton numéro de réservation.`,
-                [{ text: 'Super !', onPress: () => navigation.goBack() }]
-              );
+              confirmerReservation(resultat.reservation, navigation);
             } catch (err) {
               Alert.alert('Erreur', err?.response?.data?.erreur || 'La réservation a échoué. Réessaie.');
             } finally {
@@ -303,9 +353,9 @@ function LignePrix({ offre }) {
     <View style={styles.lignePresentation}>
       <View>
         <Text style={styles.labelPrix}>Prix total</Text>
-        <Text style={styles.prixOriginal}>{offre.prixOriginal.toFixed(2)}€</Text>
+        <Text style={styles.prixOriginal}>{Number(offre.prixOriginal).toFixed(2)}€</Text>
       </View>
-      <Text style={styles.prixReduit}>{offre.prixReduit.toFixed(2)}€</Text>
+      <Text style={styles.prixReduit}>{Number(offre.prixReduit).toFixed(2)}€</Text>
     </View>
   );
 }

@@ -117,12 +117,12 @@ router.patch('/:id/statut', authMiddleware, async (req, res) => {
     }
 
     // Vérifie que le pharmacien connecté est bien propriétaire de la pharmacie
-    if (Number(reservation.offre.pharmacieId) !== Number(req.utilisateur.pharmacieId)) {
+    if (!req.utilisateur.pharmacieId || Number(reservation.offre?.pharmacieId) !== Number(req.utilisateur.pharmacieId)) {
       return res.status(403).json({ erreur: 'Accès refusé.' });
     }
 
     if (reservation.statut !== 'confirmee') {
-      return res.status(400).json({ erreur: 'Seules les réservations confirmées peuvent être marquées retirées.' });
+      return res.status(400).json({ erreur: 'Seules les réservations à retirer peuvent être validées.' });
     }
 
     await reservation.update({ statut: 'retiree' });
@@ -161,6 +161,8 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 // -------------------------------------------------------
 router.post('/:id/noter', authMiddleware, async (req, res) => {
   const note = Number(req.body.note);
+  const id   = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ erreur: 'Identifiant invalide.' });
 
   if (!Number.isInteger(note) || note < 1 || note > 5) {
     return res.status(400).json({ erreur: 'La note doit être comprise entre 1 et 5.' });
@@ -169,7 +171,7 @@ router.post('/:id/noter', authMiddleware, async (req, res) => {
   try {
     const reservation = await Reservation.findOne({
       where: {
-        id:            req.params.id,
+        id,
         utilisateurId: req.utilisateur.id,
         statut:        'retiree',
       },

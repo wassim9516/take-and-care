@@ -5,11 +5,12 @@
 // Utilise expo-location pour obtenir la position de l'utilisateur.
 // ============================================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ActivityIndicator,
-  TouchableOpacity, Alert, ScrollView,
+  TouchableOpacity, Alert, ScrollView, Linking,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import MapView, { Marker, Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -28,60 +29,59 @@ export default function MapScreen({ navigation }) {
   // -------------------------------------------------------
   // Lire le rayon depuis les préférences utilisateur
   // -------------------------------------------------------
-  useEffect(() => {
+  // Relu à chaque affichage de l'onglet (le rayon se règle dans Profil)
+  useFocusEffect(useCallback(() => {
     AsyncStorage.getItem('rayon_carte').then(val => {
-      if (val) setRayonKm(parseInt(val));
-    });
-  }, []);
+      if (val) setRayonKm(parseInt(val, 10));
+    }).catch(() => {});
+  }, []));
 
   // -------------------------------------------------------
   // Demander la permission GPS et charger la position
   // -------------------------------------------------------
-  useEffect(() => {
-    const initialiser = async () => {
-      // Demande la permission de localisation
-      const { status } = await Location.requestForegroundPermissionsAsync();
+  const [permissionRefusee, setPermissionRefusee] = useState(false);
 
-      if (status !== 'granted') {
-        Alert.alert(
-          'Permission refusée',
-          'Take & Care a besoin de ta position pour trouver les pharmacies proches.',
-          [{ text: 'OK' }]
-        );
-        setChargement(false);
-        return;
-      }
+  const initialiser = useCallback(async () => {
+    setChargement(true);
+    setPermissionRefusee(false);
+    // Demande la permission de localisation
+    const { status } = await Location.requestForegroundPermissionsAsync();
 
-      let coordonnees;
-      try {
-        // Obtenir la position actuelle
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        if (!loc?.coords) throw new Error('Position indisponible.');
-        coordonnees = loc.coords;
-        setPosition(coordonnees);
-      } catch (erreur) {
-        Alert.alert('Localisation', 'Impossible d\'obtenir ta position GPS.');
-        setChargement(false);
-        return;
-      }
+    if (status !== 'granted') {
+      setPermissionRefusee(true);
+      setChargement(false);
+      return;
+    }
 
-      try {
-        // Charger les pharmacies proches
-        const data = await getPharmaciesProches(coordonnees.latitude, coordonnees.longitude);
-        setPharmacies(data);
-      } catch (erreur) {
-        Alert.alert(
-          'Serveur inaccessible',
-          'Impossible de charger les pharmacies. Vérifie que le backend est lancé et que l\'IP dans config.js est correcte.'
-        );
-        console.error(erreur);
-      } finally {
-        setChargement(false);
-      }
-    };
+    let coordonnees;
+    try {
+      // Obtenir la position actuelle
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      if (!loc?.coords) throw new Error('Position indisponible.');
+      coordonnees = loc.coords;
+      setPosition(coordonnees);
+    } catch (erreur) {
+      Alert.alert('Localisation', 'Impossible d\'obtenir ta position GPS.');
+      setChargement(false);
+      return;
+    }
 
-    initialiser();
+    try {
+      // Charger les pharmacies proches
+      const data = await getPharmaciesProches(coordonnees.latitude, coordonnees.longitude);
+      setPharmacies(data);
+    } catch (erreur) {
+      Alert.alert(
+        'Serveur inaccessible',
+        'Impossible de charger les pharmacies. Vérifie ta connexion internet et réessaie.'
+      );
+      console.error(erreur);
+    } finally {
+      setChargement(false);
+    }
   }, []);
+
+  useEffect(() => { initialiser(); }, [initialiser]);
 
   // -------------------------------------------------------
   // Rendu : chargement
@@ -103,7 +103,19 @@ export default function MapScreen({ navigation }) {
       <View style={styles.centrer}>
         <Ionicons name="location-off-outline" size={60} color={COLORS.texteClair} />
         <Text style={styles.texteErreur}>Position non disponible</Text>
-        <Text style={styles.texteClair}>Active la localisation dans les réglages</Text>
+        <Text style={styles.texteClair}>
+          {permissionRefusee
+            ? 'Autorise la localisation pour voir les pharmacies proches.'
+            : 'Impossible d\'obtenir ta position GPS.'}
+        </Text>
+        <TouchableOpacity style={styles.boutonReessayer} onPress={initialiser}>
+          <Text style={styles.texteReessayer}>Réessayer</Text>
+        </TouchableOpacity>
+        {permissionRefusee && (
+          <TouchableOpacity onPress={() => Linking.openSettings()}>
+            <Text style={styles.lienReglages}>Ouvrir les réglages</Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   }
@@ -173,10 +185,13 @@ export default function MapScreen({ navigation }) {
 
           <Text style={styles.adresse}>{pharmacieSelectionnee.adresse}</Text>
           <Text style={styles.infos}>
-            📞 {pharmacieSelectionnee.telephone}  •  ⭐ {pharmacieSelectionnee.note}/5
+            {pharmacieSelectionnee.telephone ? `📞 ${pharmacieSelectionnee.telephone}  •  ` : ''}
+            {pharmacieSelectionnee.note > 0 ? `⭐ ${pharmacieSelectionnee.note}/5` : 'Pas encore d\'avis'}
           </Text>
-          <Text style={styles.infos}>🕐 {pharmacieSelectionnee.horaires}</Text>
-          {pharmacieSelectionnee.distance && (
+          {!!pharmacieSelectionnee.horaires && (
+            <Text style={styles.infos}>🕐 {pharmacieSelectionnee.horaires}</Text>
+          )}
+          {pharmacieSelectionnee.distance != null && (
             <Text style={styles.distance}>📍 {pharmacieSelectionnee.distance} km de toi</Text>
           )}
 
@@ -185,11 +200,11 @@ export default function MapScreen({ navigation }) {
             <TouchableOpacity
               style={[styles.bouton, styles.boutonSecondaire]}
               onPress={() => {
-                const nomPharmacie = pharmacieSelectionnee.nom;
+                const { id, nom } = pharmacieSelectionnee;
                 setPharmacieSelectionnee(null);
                 navigation.navigate('Offres', {
                   screen: 'Accueil',
-                  params: { pharmacieNom: nomPharmacie },
+                  params: { pharmacieId: id, pharmacieNom: nom },
                 });
               }}
             >
@@ -223,7 +238,7 @@ export default function MapScreen({ navigation }) {
                 onPress={() => setPharmacieSelectionnee(p)}
               >
                 <Text style={styles.nomPharmacieMin} numberOfLines={1}>{p.nom}</Text>
-                {p.distance && (
+                {p.distance != null && (
                   <Text style={styles.distanceMin}>{p.distance} km</Text>
                 )}
               </TouchableOpacity>
@@ -240,6 +255,12 @@ export default function MapScreen({ navigation }) {
 // Styles
 // -------------------------------------------------------
 const styles = StyleSheet.create({
+  boutonReessayer: {
+    backgroundColor: COLORS.primaire, borderRadius: 12,
+    paddingHorizontal: 28, paddingVertical: 12, marginTop: 16,
+  },
+  texteReessayer: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  lienReglages:   { color: COLORS.primaire, fontWeight: '600', marginTop: 14 },
   conteneur: {
     flex: 1,
   },

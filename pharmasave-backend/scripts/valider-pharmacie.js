@@ -15,6 +15,7 @@ require('dotenv').config();
 const sequelize = require('../database/connection');
 const { Pharmacie, Utilisateur } = require('../database/models');
 const { executerMigrations } = require('../database/migrations');
+const { messageErreur } = require('../utils/erreurs');
 
 async function main() {
   await sequelize.authenticate();
@@ -57,5 +58,5 @@ async function main() {
 }
 
 main()
-  .catch(err => { console.error('❌', err.message); process.exitCode = 1; })
+  .catch(err => { console.error('❌', messageErreur(err)); process.exitCode = 1; })
   .finally(() => sequelize.close());

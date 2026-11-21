@@ -28,7 +28,8 @@ export default function PharmacieScreen({ navigation, route }) {
   const chargerDetails = async () => {
     try {
       const data = await getPharmacie(pharmacieBase.id);
-      setPharmacie(data);
+      // Garde les infos déjà connues (distance calculée par la carte)
+      setPharmacie(prev => ({ ...prev, ...data }));
     } catch {
       // On garde les données de base si l'appel échoue
     } finally {
@@ -40,6 +41,7 @@ export default function PharmacieScreen({ navigation, route }) {
   // Actions natives
   // -------------------------------------------------------
   const appelTelephone = () => {
+    if (!pharmacie.telephone) return;
     const url = `tel:${pharmacie.telephone}`;
     Linking.canOpenURL(url).then(ok => {
       if (ok) Linking.openURL(url);
@@ -53,10 +55,6 @@ export default function PharmacieScreen({ navigation, route }) {
       ? `maps://maps.apple.com/?q=${adresse}`
       : `https://maps.google.com/?q=${adresse}`;
     Linking.openURL(url);
-  };
-
-  const ouvrirSite = () => {
-    if (pharmacie.siteWeb) Linking.openURL(pharmacie.siteWeb);
   };
 
   // -------------------------------------------------------
@@ -128,28 +126,21 @@ export default function PharmacieScreen({ navigation, route }) {
               actionIcone="navigate-outline"
             />
 
-            <LigneInfo
-              icone="call-outline"
-              texte={pharmacie.telephone}
-              onPress={appelTelephone}
-              actionLabel="Appeler"
-              actionIcone="call"
-            />
+            {pharmacie.telephone ? (
+              <LigneInfo
+                icone="call-outline"
+                texte={pharmacie.telephone}
+                onPress={appelTelephone}
+                actionLabel="Appeler"
+                actionIcone="call"
+              />
+            ) : null}
 
             <LigneInfo
               icone="time-outline"
               texte={pharmacie.horaires || 'Horaires non renseignés'}
             />
 
-            {pharmacie.siteWeb ? (
-              <LigneInfo
-                icone="globe-outline"
-                texte={pharmacie.siteWeb}
-                onPress={ouvrirSite}
-                actionLabel="Visiter"
-                actionIcone="open-outline"
-              />
-            ) : null}
 
           </View>
 
@@ -196,7 +187,7 @@ export default function PharmacieScreen({ navigation, route }) {
           onPress={() =>
             navigation.navigate('Offres', {
               screen: 'Accueil',
-              params: { pharmacieNom: pharmacie.nom },
+              params: { pharmacieId: pharmacie.id, pharmacieNom: pharmacie.nom },
             })
           }
         >

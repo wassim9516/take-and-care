@@ -9,10 +9,12 @@ import { Leaf } from 'lucide-react';
 import Login                  from './pages/Login';
 import Dashboard              from './pages/Dashboard';
 import InscriptionPharmacien  from './pages/InscriptionPharmacien';
+import Administration         from './pages/Administration';
 
 function Routeur() {
-  const { estConnecte, chargement } = useAuth();
+  const { estConnecte, chargement, pharmacien } = useAuth();
   const [afficherInscription, setAfficherInscription] = useState(false);
+  const [vueAdmin, setVueAdmin] = useState(true);
 
   if (chargement) {
     return (
@@ -22,7 +24,14 @@ function Routeur() {
     );
   }
 
-  if (estConnecte) return <Dashboard />;
+  if (estConnecte) {
+    // Administrateur : espace d'administration ; s'il gère aussi une
+    // officine, il peut basculer vers son tableau de bord
+    if (pharmacien?.estAdmin && (vueAdmin || !pharmacien.pharmacieId)) {
+      return <Administration onEspacePharmacie={pharmacien.pharmacieId ? () => setVueAdmin(false) : null} />;
+    }
+    return <Dashboard onAdministration={pharmacien?.estAdmin ? () => setVueAdmin(true) : null} />;
+  }
 
   if (afficherInscription) {
     return <InscriptionPharmacien onRetourConnexion={() => setAfficherInscription(false)} />;

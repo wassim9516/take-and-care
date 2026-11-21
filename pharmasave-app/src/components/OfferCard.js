@@ -22,13 +22,17 @@ const LABELS_CATEGORIES = {
 // -------------------------------------------------------
 // Composant OfferCard
 // Props attendues :
-//   - offre : objet offre complet (voir mockData.js)
+//   - offre : objet offre renvoyé par l'API (GET /api/offers)
 //   - onPress : fonction appelée au clic sur la carte
 // -------------------------------------------------------
 export default function OfferCard({ offre, onPress, estFavori = false, onToggleFavori }) {
   const pourcentageReduction = offre.prixOriginal > 0
     ? Math.round(((offre.prixOriginal - offre.prixReduit) / offre.prixOriginal) * 100)
     : 0;
+
+  const couleurCategorie = COLORS.categories[offre.categorie] || COLORS.primaire;
+  const prixReduit   = Number(offre.prixReduit) || 0;
+  const prixOriginal = Number(offre.prixOriginal) || 0;
 
   // Couleur du badge selon le stock restant
   const couleurStock = offre.quantiteDisponible <= 1
@@ -42,9 +46,9 @@ export default function OfferCard({ offre, onPress, estFavori = false, onToggleF
 
       {/* Image du panier */}
       <Image
-        source={{ uri: offre.image }}
+        source={offre.image ? { uri: offre.image } : require('../../assets/placeholder.png')}
         style={styles.image}
-        // Image de remplacement si l'URL ne charge pas
+        // Image de remplacement pendant le chargement (iOS)
         defaultSource={require('../../assets/placeholder.png')}
       />
 
@@ -74,25 +78,29 @@ export default function OfferCard({ offre, onPress, estFavori = false, onToggleF
         <Text style={styles.titre} numberOfLines={1}>{offre.titre}</Text>
 
         {/* Badge catégorie */}
-        <View style={[styles.badgeCategorie, { backgroundColor: COLORS.categories[offre.categorie] + '25' }]}>
-          <Text style={[styles.texteCategorie, { color: COLORS.categories[offre.categorie] }]}>
-            {LABELS_CATEGORIES[offre.categorie] || offre.categorie}
-          </Text>
-        </View>
+        {offre.categorie ? (
+          <View style={[styles.badgeCategorie, { backgroundColor: couleurCategorie + '25' }]}>
+            <Text style={[styles.texteCategorie, { color: couleurCategorie }]}>
+              {LABELS_CATEGORIES[offre.categorie] || offre.categorie}
+            </Text>
+          </View>
+        ) : null}
 
         {/* Ligne prix + stock */}
         <View style={styles.ligneInfos}>
 
           {/* Prix */}
           <View style={styles.conteneurPrix}>
-            <Text style={styles.prixReduit}>{offre.prixReduit.toFixed(2)}€</Text>
-            <Text style={styles.prixOriginal}>{offre.prixOriginal.toFixed(2)}€</Text>
+            <Text style={styles.prixReduit}>{prixReduit.toFixed(2)}€</Text>
+            {prixOriginal > prixReduit && <Text style={styles.prixOriginal}>{prixOriginal.toFixed(2)}€</Text>}
           </View>
 
           {/* Nombre de paniers restants */}
           <View style={[styles.badgeStock, { backgroundColor: couleurStock + '20' }]}>
             <Text style={[styles.texteStock, { color: couleurStock }]}>
-              {offre.quantiteDisponible} restant{offre.quantiteDisponible > 1 ? 's' : ''}
+              {offre.quantiteDisponible > 0
+                ? `${offre.quantiteDisponible} restant${offre.quantiteDisponible > 1 ? 's' : ''}`
+                : 'Épuisé'}
             </Text>
           </View>
 
@@ -100,7 +108,7 @@ export default function OfferCard({ offre, onPress, estFavori = false, onToggleF
 
         {/* Heure de retrait + distance */}
         <View style={styles.ligneBasCarte}>
-          <Text style={styles.heureRetrait}>⏰ {offre.heureRetrait}</Text>
+          <Text style={styles.heureRetrait}>{offre.heureRetrait ? `⏰ ${offre.heureRetrait}` : ''}</Text>
           {offre.distance != null && (
             <Text style={styles.distance}>📍 {offre.distance} km</Text>
           )}

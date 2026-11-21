@@ -7,7 +7,7 @@
 // ============================================================
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Check, Hourglass, X, CheckCircle2, AlertTriangle, HelpCircle, Leaf } from 'lucide-react';
+import { Check, Hourglass, X, Clock, CheckCircle2, AlertTriangle, HelpCircle, Leaf } from 'lucide-react';
 
 export const COULEUR_SERIE = '#1F8A5B';
 
@@ -16,9 +16,10 @@ export const STATUTS = {
   retiree:   { label: 'Retirée',    icone: Check,     couleur: '#0CA30C' },
   confirmee: { label: 'À retirer',  icone: Hourglass, couleur: '#FAB219' },
   annulee:   { label: 'Annulée',    icone: X,         couleur: '#D03B3B' },
+  expiree:   { label: 'Expirée',    icone: Clock,     couleur: '#8A8F98' },
 };
 // Ordre d'affichage : vert et rouge jamais côte à côte (daltonisme)
-export const ORDRE_STATUTS = ['retiree', 'confirmee', 'annulee'];
+export const ORDRE_STATUTS = ['retiree', 'confirmee', 'expiree', 'annulee'];
 
 export const formaterEuros = (v, decimales = 2) =>
   `${(v || 0).toLocaleString('fr-FR', { minimumFractionDigits: decimales, maximumFractionDigits: decimales })} €`;

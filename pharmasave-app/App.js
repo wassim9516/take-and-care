@@ -6,7 +6,7 @@
 //   - Connecté     → app principale avec 3 onglets
 // ============================================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
@@ -30,6 +30,7 @@ import PharmacieScreen   from './src/screens/PharmacieScreen';
 import ProfileScreen     from './src/screens/ProfileScreen';
 import LoginScreen            from './src/screens/LoginScreen';
 import CodeVerificationScreen from './src/screens/CodeVerificationScreen';
+import MotDePasseOublieScreen from './src/screens/MotDePasseOublieScreen';
 import FavorisScreen          from './src/screens/FavorisScreen';
 import OnboardingScreen       from './src/screens/OnboardingScreen';
 
@@ -51,6 +52,7 @@ function AuthStack() {
     <Stack.Navigator screenOptions={{ ...stackOptions, headerShown: false }}>
       <Stack.Screen name="Login"        component={LoginScreen} />
       <Stack.Screen name="Verification" component={CodeVerificationScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="MotDePasseOublie" component={MotDePasseOublieScreen} options={{ headerShown: true, title: 'Mot de passe oublié' }} />
     </Stack.Navigator>
   );
 }
@@ -126,26 +128,34 @@ function AppPrincipale() {
 function Routeur() {
   const { estConnecte, chargement, erreurReseau, retenterConnexion } = useAuth();
   const [onboardingFait, setOnboardingFait] = useState(null); // null = chargement
+  const [navigationPrete, setNavigationPrete] = useState(false);
 
   useEffect(() => {
-    AsyncStorage.getItem('onboarding_done').then(val => {
-      setOnboardingFait(val === 'true');
-    });
+    AsyncStorage.getItem('onboarding_done')
+      .then(val => setOnboardingFait(val === 'true'))
+      .catch(() => setOnboardingFait(true));
   }, []);
 
-  // Listener : tap sur une notification → ouvre l'offre concernée
+  // Tap sur une notification → ouvre l'offre concernée. Ce hook couvre
+  // aussi l'app lancée depuis la notification (app fermée) : on attend
+  // que la navigation soit prête et l'utilisateur connecté.
+  const derniereReponse = Notifications.useLastNotificationResponse();
+  const reponseTraitee = useRef(null);
   useEffect(() => {
-    const abonnement = Notifications.addNotificationResponseReceivedListener(response => {
-      const offreId = response.notification.request.content.data?.offreId;
-      if (offreId && navigationRef.isReady()) {
-        navigationRef.navigate('Offres', {
-          screen: 'OfferDetail',
-          params: { offerId: offreId },
-        });
-      }
-    });
-    return () => abonnement.remove();
-  }, []);
+    if (!derniereReponse || !navigationPrete || !estConnecte) return;
+    const id = derniereReponse.notification.request.identifier;
+    if (reponseTraitee.current === id) return;
+    reponseTraitee.current = id;
+    const offreId = derniereReponse.notification.request.content.data?.offreId;
+    if (offreId) {
+      navigationRef.navigate('Offres', {
+        screen: 'OfferDetail',
+        params: { offerId: offreId },
+      });
+    } else {
+      navigationRef.navigate('Profil');
+    }
+  }, [derniereReponse, navigationPrete, estConnecte]);
 
   const terminerOnboarding = async () => {
     await AsyncStorage.setItem('onboarding_done', 'true');
@@ -181,7 +191,7 @@ function Routeur() {
   }
 
   return (
-    <NavigationContainer ref={navigationRef}>
+    <NavigationContainer ref={navigationRef} onReady={() => setNavigationPrete(true)}>
       <StatusBar style="dark" />
       {estConnecte ? <AppPrincipale /> : <AuthStack />}
     </NavigationContainer>

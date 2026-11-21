@@ -8,12 +8,15 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   User, Store, ShieldCheck, SlidersHorizontal, Camera, MapPin, Crosshair,
   Phone, Clock, Mail, KeyRound, LogOut, Monitor, LayoutGrid, List, RefreshCw,
-  Bell, Check, Info, Loader2, Plus, X, Save,
+  Bell, Check, Info, Loader2, Plus, X, Save, Trash2, FileText,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
-  modifierProfil, modifierPharmacie, modifierMotDePasse, deconnecterPartout, uploadImage,
+  modifierProfil, modifierPharmacie, modifierMotDePasse, deconnecterPartout, uploadImage, supprimerCompte,
 } from '../api/client';
+import { erreurMotDePasse } from '../utils/validation';
+import { geocoderAdresse } from '../utils/geocodage';
+import { LIENS_LEGAUX } from '../config';
 import { useRetours } from '../components/ui';
 import { usePreferences } from '../utils/preferences';
 import {
@@ -236,6 +239,21 @@ function SectionPharmacie({ pharmacie, onMiseAJour }) {
   }));
   const copierLundi = () => setSemaine(s => s.map((j, k) => (k > 0 && k < 5 ? JSON.parse(JSON.stringify(s[0])) : j)));
 
+  const localiserAdresse = async () => {
+    setErreur('');
+    setGeoChargement(true);
+    try {
+      const resultat = await geocoderAdresse(valeurs.adresse);
+      if (!resultat) { setErreur('Adresse introuvable : vérifie-la ou utilise ta position actuelle.'); return; }
+      setValeurs(v => ({ ...v, latitude: resultat.latitude, longitude: resultat.longitude }));
+      notifier(`Position trouvée : ${resultat.libelle}`);
+    } catch {
+      setErreur('Localisation de l\'adresse impossible pour le moment.');
+    } finally {
+      setGeoChargement(false);
+    }
+  };
+
   const geoLocaliser = () => {
     if (!navigator.geolocation) { setErreur('Géolocalisation non supportée par ce navigateur.'); return; }
     setGeoChargement(true);
@@ -391,6 +409,9 @@ function SectionPharmacie({ pharmacie, onMiseAJour }) {
             <Champ id="p-lng" label="Longitude" type="number" step="any" value={valeurs.longitude} onChange={changer('longitude')} />
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button type="button" className="tc-btn tc-btn-secondaire tc-btn-petit" onClick={localiserAdresse} disabled={geoChargement || valeurs.adresse.trim().length < 5}>
+              <MapPin size={15} /> Localiser l'adresse
+            </button>
             <button type="button" className="tc-btn tc-btn-secondaire tc-btn-petit" onClick={geoLocaliser} disabled={geoChargement}>
               {geoChargement ? <Loader2 size={15} className="tc-tourne" /> : <Crosshair size={15} />} Utiliser ma position actuelle
             </button>
@@ -439,6 +460,10 @@ function SectionPharmacie({ pharmacie, onMiseAJour }) {
 // -------------------------------------------------------
 function SectionSecurite() {
   const { notifier, confirmer } = useRetours();
+  const { seDeconnecter } = useAuth();
+  const [mdpSuppression, setMdpSuppression] = useState('');
+  const [suppressionEnCours, setSuppressionEnCours] = useState(false);
+  const [erreurSuppression, setErreurSuppression] = useState('');
   const [ancien, setAncien] = useState('');
   const [nouveau, setNouveau] = useState('');
   const [confirmation, setConfirmation] = useState('');
@@ -454,7 +479,8 @@ function SectionSecurite() {
   const changer = async (e) => {
     e.preventDefault();
     setErreur('');
-    if (nouveau.length < 6) return setErreur('Le nouveau mot de passe doit faire au moins 6 caractères.');
+    const erreurMdp = erreurMotDePasse(nouveau);
+    if (erreurMdp) return setErreur(erreurMdp);
     if (nouveau !== confirmation) return setErreur('Les deux nouveaux mots de passe ne correspondent pas.');
     setChargement(true);
     try {
@@ -465,6 +491,25 @@ function SectionSecurite() {
       setErreur(err.response?.data?.erreur || 'Ancien mot de passe incorrect.');
     } finally {
       setChargement(false);
+    }
+  };
+
+  const supprimer = async (e) => {
+    e.preventDefault();
+    setErreurSuppression('');
+    const ok = await confirmer({
+      icone: Trash2, danger: true, bouton: 'Supprimer définitivement',
+      titre: 'Supprimer ton compte ?',
+      texte: 'Tes offres seront retirées de l\'application et ta pharmacie ne sera plus visible. Tes informations personnelles seront effacées. Cette action est irréversible.',
+    });
+    if (!ok) return;
+    setSuppressionEnCours(true);
+    try {
+      await supprimerCompte(mdpSuppression);
+      seDeconnecter();
+    } catch (err) {
+      setErreurSuppression(err.response?.data?.erreur || 'Suppression impossible. Réessaie.');
+      setSuppressionEnCours(false);
     }
   };
 
@@ -501,7 +546,7 @@ function SectionSecurite() {
         <form id="form-mdp" onSubmit={changer} className="tc-formulaire" style={{ maxWidth: 420 }}>
           <Champ id="s-ancien" label="Mot de passe actuel" type="password" autoComplete="current-password" value={ancien} onChange={e => setAncien(e.target.value)} />
           <div className="tc-groupe">
-            <Champ id="s-nouveau" label="Nouveau mot de passe" aide="6 caractères minimum" type="password" autoComplete="new-password" value={nouveau} onChange={e => setNouveau(e.target.value)} />
+            <Champ id="s-nouveau" label="Nouveau mot de passe" aide="8 caractères, dont une lettre et un chiffre" type="password" autoComplete="new-password" value={nouveau} onChange={e => setNouveau(e.target.value)} />
             {nouveau && (
               <div className="tc-force" data-niveau={force}>
                 <div className="tc-force-barres">{[1, 2, 3, 4].map(n => <span key={n} className={n <= force ? 'plein' : ''} />)}</div>
@@ -533,6 +578,28 @@ function SectionSecurite() {
             {deconnexionEnCours ? <Loader2 size={15} className="tc-tourne" /> : <LogOut size={15} />} Tout déconnecter
           </button>
         </div>
+      </Carte>
+
+      <Carte titre="Documents" description="Conditions applicables à ton espace et à tes clients.">
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <a className="tc-btn tc-btn-secondaire tc-btn-petit" href={LIENS_LEGAUX.cgu} target="_blank" rel="noreferrer"><FileText size={15} /> Conditions générales</a>
+          <a className="tc-btn tc-btn-secondaire tc-btn-petit" href={LIENS_LEGAUX.confidentialite} target="_blank" rel="noreferrer"><ShieldCheck size={15} /> Confidentialité</a>
+        </div>
+      </Carte>
+
+      <Carte
+        titre="Supprimer mon compte"
+        description="Possible quand tous les paniers réservés ont été retirés ou ont expiré."
+        pied={(
+          <button type="submit" form="form-suppression" className="tc-btn tc-btn-danger" disabled={suppressionEnCours || !mdpSuppression}>
+            {suppressionEnCours ? <Loader2 size={16} className="tc-tourne" /> : <Trash2 size={16} />} Supprimer mon compte
+          </button>
+        )}
+      >
+        <form id="form-suppression" onSubmit={supprimer} className="tc-formulaire">
+          <Champ id="s-suppr" label="Mot de passe" type="password" autoComplete="current-password" value={mdpSuppression} onChange={e => setMdpSuppression(e.target.value)} />
+          {erreurSuppression && <div className="tc-alerte erreur">{erreurSuppression}</div>}
+        </form>
       </Carte>
     </div>
   );

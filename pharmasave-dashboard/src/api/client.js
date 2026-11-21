@@ -47,6 +47,21 @@ export const getMoi = async () => {
   return response.data;
 };
 
+export const demanderReinitialisation = async (email) => {
+  const response = await api.post('/auth/mot-de-passe-oublie', { email });
+  return response.data;
+};
+
+export const reinitialiserMotDePasse = async (email, code, nouveauMotDePasse) => {
+  const response = await api.post('/auth/reinitialiser-mot-de-passe', { email, code, nouveauMotDePasse });
+  return response.data;
+};
+
+export const supprimerCompte = async (motDePasse) => {
+  const response = await api.delete('/auth/compte', { data: { motDePasse } });
+  return response.data;
+};
+
 export const inscriptionPharmacien = async (data) => {
   const response = await api.post('/auth/inscription-pharmacien', data);
   return response.data;
@@ -66,8 +81,9 @@ export const modifierPharmacie = async (id, data) => {
 // -------------------------------------------------------
 // OFFRES
 // -------------------------------------------------------
-export const getOffresPharmacien = async (pharmacieId) => {
-  const response = await api.get(`/offers/pharmacie/${pharmacieId}`);
+// Toutes les offres de la pharmacie connectée, y compris masquées
+export const getOffresPharmacien = async () => {
+  const response = await api.get('/offers/mienne');
   return response.data;
 };
 
@@ -124,6 +140,24 @@ export const modifierProfil = async (data) => {
 export const deconnecterPartout = async () => {
   const response = await api.post('/auth/deconnexion-partout');
   if (response.data.token) localStorage.setItem('token_pharmacien', response.data.token);
+  return response.data;
+};
+
+// -------------------------------------------------------
+// ADMINISTRATION (comptes estAdmin)
+// -------------------------------------------------------
+export const getPharmaciesAdmin = async (statut = 'attente') => {
+  const response = await api.get('/admin/pharmacies', { params: { statut } });
+  return response.data;
+};
+
+export const changerValidationPharmacie = async (id, valide, message = '') => {
+  const response = await api.patch(`/admin/pharmacies/${id}`, { valide, message });
+  return response.data;
+};
+
+export const getStatsAdmin = async () => {
+  const response = await api.get('/admin/stats');
   return response.data;
 };
 
