@@ -73,7 +73,7 @@ Le pas-à-pas complet est dans [DEMARRAGE.md](DEMARRAGE.md), la publication sur 
 
 Ce projet fait l'objet d'un **audit de sécurité** mené selon l'OWASP MASVS et la méthode STRIDE : modélisation des menaces, analyse statique du code et tests dynamiques (contrôle d'accès entre les rôles, robustesse des QR codes de retrait, stockage des données sensibles).
 
-👉 Rapport complet : [takeandcare-security-audit](https://github.com/[ton-pseudo]/takeandcare-security-audit)
+👉 Rapport complet : [takeandcare-security-audit](https://github.com/wassim9516/takeandcare-security-audit)
 
 ## Feuille de route
 
